@@ -6,7 +6,7 @@ Este arquivo explica **como o repositório está dividido**, para qualquer pesso
 - entender o fluxo do sistema (sidebar → navegação → páginas)
 
 > Regra de ouro: **cada arquivo tem um “papel”**. Se você não sabe onde colocar algo, leia a seção “Onde colocar o quê”.
-
+> Para instalar todas os imports use pip install -r requirements.txt
 ---
 
 ## 1) Estrutura de pastas
