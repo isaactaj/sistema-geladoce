@@ -1,0 +1,6 @@
+customtkinter
+pillow
+matplotlib
+pandas
+openpyxl
+reportlab
