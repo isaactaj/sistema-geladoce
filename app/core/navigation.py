@@ -1,8 +1,10 @@
 import customtkinter as ctk
 
-from app.config.theme import COR_FUNDO, COR_TEXTO, COR_TEXTO_SEC, FONTE
+from app.config.theme import COR_FUNDO
 from app.pages.placeholder import PlaceholderPage
 from app.pages.relatorios.page import PaginaAdminRelatorios
+from app.pages.funcionarios.page import PaginaFuncionarios
+
 
 
 class Navigation(ctk.CTkFrame):
@@ -22,6 +24,7 @@ class Navigation(ctk.CTkFrame):
         # mapeamento de rotas -> classes de páginas
         self.routes = {
             "relatorios": PaginaAdminRelatorios,
+            "funcionarios": PaginaFuncionarios
             # as demais vão cair no placeholder
         }
 
