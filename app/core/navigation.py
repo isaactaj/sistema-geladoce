@@ -25,7 +25,7 @@ class Navigation(ctk.CTkFrame):
         self.routes = {
             "relatorios": PaginaAdminRelatorios,
             "funcionarios": PaginaFuncionarios,
-            "balcao": PaginaVendasBalcao
+            "balcao": PaginaVendasBalcao,
         }
 
         # começa no início
