@@ -4,7 +4,7 @@ from app.config.theme import COR_FUNDO
 from app.pages.placeholder import PlaceholderPage
 from app.pages.relatorios.page import PaginaAdminRelatorios
 from app.pages.funcionarios.page import PaginaFuncionarios
-
+from app.pages.balcao.page import PaginaVendasBalcao
 
 
 class Navigation(ctk.CTkFrame):
@@ -24,8 +24,8 @@ class Navigation(ctk.CTkFrame):
         # mapeamento de rotas -> classes de páginas
         self.routes = {
             "relatorios": PaginaAdminRelatorios,
-            "funcionarios": PaginaFuncionarios
-            # as demais vão cair no placeholder
+            "funcionarios": PaginaFuncionarios,
+            "balcao": PaginaVendasBalcao,
         }
 
         # começa no início

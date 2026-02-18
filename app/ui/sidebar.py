@@ -106,7 +106,7 @@ class MenuLateral(ctk.CTkFrame):
             titulo="Vendas",
             ao_clicar=self.ao_navegar,
             itens=[
-                ("Balcão", "vendas_balcao"),
+                ("Balcão", "balcao"),
                 ("Revenda", "revenda"),
                 ("Serviços", "servicos"),
                 ("Fechamento", "fechamento"),
