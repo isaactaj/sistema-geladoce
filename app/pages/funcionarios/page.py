@@ -1,6 +1,7 @@
 
 import customtkinter as ctk
 from tkinter import ttk
+from tkinter import messagebox
 from app.config import theme
 
 #  Pagina funcionarios 
@@ -274,7 +275,7 @@ class PaginaFuncionarios(ctk.CTkFrame):
 
         erro = self._validar(nome, cpf, telefone)
         if erro:
-            self.lbl_status.configure(text=erro, text_color=theme.COR_ERRO)
+            messagebox.showwarning("Campos inválidos", erro)
             return
 
         cpf_digits = "".join([c for c in cpf if c.isdigit()])
@@ -287,26 +288,38 @@ class PaginaFuncionarios(ctk.CTkFrame):
                     f["cpf"] = cpf_digits
                     f["telefone"] = telefone.strip()
                     break
-            self.lbl_status.configure(text="Funcionário atualizado.", text_color=theme.COR_SUCESSO)
+            self._limpar_form()
+            self._atualizar_tabela()
+            messagebox.showinfo("Sucesso", "Funcionário atualizado com sucesso")
+            return
 
         # cadastrar novo
         else:
             self._inserir_funcionario(nome.strip(), cpf_digits, telefone.strip())
-            self.lbl_status.configure(text="Funcionário cadastrado.", text_color=theme.COR_SUCESSO)
+            self._limpar_form()
+            self._atualizar_tabela()
+            messagebox.showinfo("Sucesso", "Funcionário adicionado com sucesso")
 
-        self._limpar_form()
-        self._atualizar_tabela()
 
     def _excluir(self):
         if self.id_selecionado is None:
-            self.lbl_status.configure(text="Selecione um funcionário na tabela.", text_color=theme.COR_ERRO)
+            messagebox.showwarning("Atenção", "Selecione um funcionário na tabela")
+            return
+        
+        # Confirmação
+        confirmar = messagebox.askyesno(
+            "Confirmar exclusão",
+            "Certeza que quer excluir?"
+        )
+        if not confirmar:
             return
 
         self.funcionarios = [f for f in self.funcionarios if f["id"] != self.id_selecionado]
-        self.lbl_status.configure(text="Funcionário excluído.", text_color=theme.COR_SUCESSO)
-
         self._limpar_form()
         self._atualizar_tabela()
+
+        # Mensagem final
+        messagebox.showinfo("Sucesso", "Funcionario excluido com sucesso")
 
     def _limpar_form(self):
         self.id_selecionado = None
@@ -314,7 +327,7 @@ class PaginaFuncionarios(ctk.CTkFrame):
         self.cpf_var.set("")
         self.telefone_var.set("")
         self.tree.selection_remove(self.tree.selection())
-        self.lbl_status.configure(text="", text_color=theme.COR_TEXTO_SEC)
+      
 
     def _carregar_selecionado_no_form(self):
         sel = self.tree.selection()
