@@ -34,21 +34,26 @@ class PaginaProdutos(ctk.CTkFrame):
         # Cabeçalho da Tabela
         headers = ["ID", "Nome", "Categoria", "Preço", "Qtd."]
         for i, h in enumerate(headers):
-            ctk.CTkLabel(self.tabela_frame, text=h, font=ctk.CTkFont(weight="bold")).grid(row=0, column=i, sticky="ew", pady=5)
+            # header labels left-aligned
+            ctk.CTkLabel(
+                self.tabela_frame, text=h,
+                font=ctk.CTkFont(weight="bold"),
+                anchor="w"
+            ).grid(row=0, column=i, sticky="w", pady=5)
 
         # Dados fictícios
         produtos = [
-            ("001", "Sorvete Flocos", "Massa", "R$ 12,00", "50"),
-            ("002", "Açaí Tradicional", "Açaí", "R$ 15,00", "20"),
-            ("003", "Picolé Uva", "Picolé", "R$ 3,00", "100"),
+            ("001", "Sorvete Flocos", "Massa", "R$ 12,00", "50", "30"),
+            ("002", "Açaí Tradicional", "Massa", "R$ 15,00", "20", "15"),
+            ("003", "Picolé Uva", "Picolé", "R$ 3,00", "100", "80"),
         ]
 
-        for idx, (cod, nome, cat, preco, qtd) in enumerate(produtos, start=1):
+        for idx, (cod, nome, cat, preco, qtd, estoque) in enumerate(produtos, start=1):
             cor = COR_PAINEL if idx % 2 != 0 else "transparent"
             bg = ctk.CTkFrame(self.tabela_frame, fg_color=cor)
-            bg.grid(row=idx, column=0, columnspan=5, sticky="ew", pady=2)
-            bg.grid_columnconfigure((0,1,2,3,4), weight=1)
+            bg.grid(row=idx, column=0, columnspan=6, sticky="ew", pady=2)
+            bg.grid_columnconfigure((0,1,2,3,4,5), weight=1)
             
-            valores = [cod, nome, cat, preco, qtd]
+            valores = [cod, nome, cat, preco, qtd, estoque]
             for i, v in enumerate(valores):
                 ctk.CTkLabel(bg, text=v).grid(row=0, column=i, pady=8)

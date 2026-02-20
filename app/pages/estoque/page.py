@@ -41,7 +41,7 @@ class PaginaEstoque(ctk.CTkFrame):
         # Exemplo de KPI rápido no topo
         self.lbl_status = ctk.CTkLabel(
             frame_topo,
-            text="3 itens com estoque baixo",
+            text="2 itens com estoque baixo",
             font=ctk.CTkFont(family=FONTE, size=12, weight="bold"),
             text_color=COR_ERRO
         )
@@ -100,7 +100,7 @@ class PaginaEstoque(ctk.CTkFrame):
             ("Qtd. Atual", 1), 
             ("Unidade", 1), 
             ("Status", 1), 
-            ("Ações", 1)
+            ("Editar", 1)
         ]
         
         for idx, (titulo, peso) in enumerate(colunas):
