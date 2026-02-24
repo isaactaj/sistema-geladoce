@@ -5,6 +5,9 @@ from app.pages.placeholder import PlaceholderPage
 from app.pages.relatorios.page import PaginaAdminRelatorios
 from app.pages.funcionarios.page import PaginaFuncionarios
 from app.pages.balcao.page import PaginaVendasBalcao
+from app.pages.estoque.produtos import PaginaProdutos
+from app.pages.estoque.receitas import PaginaReceitas
+from app.pages.estoque.page import PaginaEstoque
 
 
 class Navigation(ctk.CTkFrame):
@@ -26,6 +29,9 @@ class Navigation(ctk.CTkFrame):
             "relatorios": PaginaAdminRelatorios,
             "funcionarios": PaginaFuncionarios,
             "balcao": PaginaVendasBalcao,
+            "produtos": PaginaProdutos,
+            "receitas": PaginaReceitas,
+            "estoque": PaginaEstoque,
         }
 
         # começa no início
