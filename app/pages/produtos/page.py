@@ -1,17 +1,16 @@
-# app/pages/estoque/page.py
 import customtkinter as ctk
 from app.config.theme import (
     COR_FUNDO, COR_PAINEL, COR_TEXTO, COR_TEXTO_SEC, 
-    COR_BOTAO, COR_HOVER, FONTE, COR_SUCESSO, COR_ERRO, COR_AVISO
+    COR_BOTAO, COR_HOVER, COR_SELECIONADO, FONTE, COR_SUCESSO, COR_ERRO
 )
-
-class PaginaEstoque(ctk.CTkFrame):
+    
+class PaginaProdutos(ctk.CTkFrame):
     def __init__(self, master):
         super().__init__(master, fg_color=COR_FUNDO)
 
         # Configuração do Grid Principal
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1) 
+        self.grid_rowconfigure(2, weight=1) # A tabela expande
 
         # -------------------------
         # 1. Cabeçalho (Título)
@@ -20,13 +19,13 @@ class PaginaEstoque(ctk.CTkFrame):
         self.header.grid(row=0, column=0, sticky="ew", padx=30, pady=(20, 10))
 
         ctk.CTkLabel(
-            self.header, text="Estoque • Matéria Prima",
+            self.header, text="Estoque • Produtos",
             font=ctk.CTkFont(family=FONTE, size=24, weight="bold"),
             text_color=COR_TEXTO
         ).pack(side="left")
 
         # -------------------------
-        # 2. Barra de Controle
+        # 2. Barra de Controle (Pesquisa + Botão Adicionar)
         # -------------------------
         self.controls = ctk.CTkFrame(self, fg_color="transparent")
         self.controls.grid(row=1, column=0, sticky="ew", padx=30, pady=(0, 15))
@@ -34,7 +33,7 @@ class PaginaEstoque(ctk.CTkFrame):
         # Barra de Pesquisa
         self.entry_busca = ctk.CTkEntry(
             self.controls,
-            placeholder_text="Buscar material ou ingrediente...",
+            placeholder_text="Buscar produto por nome ou ID...",
             width=300,
             height=40,
             fg_color=COR_PAINEL,
@@ -43,37 +42,27 @@ class PaginaEstoque(ctk.CTkFrame):
         )
         self.entry_busca.pack(side="left", padx=(0, 10))
 
-        # Botão Buscar
+        # Botão Buscar (Opcional, pois pode ser busca dinâmica)
         self.btn_buscar = ctk.CTkButton(
             self.controls, text="🔍", width=40, height=40,
             fg_color=COR_PAINEL, hover_color=COR_HOVER,
             text_color=COR_TEXTO,
-            command=self.filtrar_estoque
+            command=self.filtrar_produtos
         )
         self.btn_buscar.pack(side="left")
 
-        # Botão Novo Item
+        # Botão Novo Produto
         self.btn_novo = ctk.CTkButton(
-            self.controls, text="+ Novo Item", height=40,
-            fg_color=COR_SUCESSO, hover_color="#1B5E20",
+            self.controls, text="+ Novo Produto", height=40,
+            fg_color=COR_SUCESSO, hover_color="#1B5E20", # Um verde mais escuro no hover
             text_color="white",
             font=ctk.CTkFont(family=FONTE, weight="bold"),
-            command=self.adicionar_item
+            command=self.adicionar_produto
         )
         self.btn_novo.pack(side="right")
 
-        # Botão Entrada/Saída Rápida (Opcional, mas útil para estoque)
-        self.btn_mov = ctk.CTkButton(
-            self.controls, text="⇄ Movimentar", height=40,
-            fg_color=COR_PAINEL, hover_color=COR_HOVER,
-            text_color=COR_TEXTO,
-            font=ctk.CTkFont(family=FONTE, weight="bold"),
-            command=self.movimentar_estoque
-        )
-        self.btn_mov.pack(side="right", padx=10)
-
         # -------------------------
-        # 3. Tabela de Estoque
+        # 3. Tabela de Produtos (Do zero)
         # -------------------------
         self.frame_tabela = ctk.CTkFrame(self, fg_color="transparent")
         self.frame_tabela.grid(row=2, column=0, sticky="nsew", padx=30, pady=(0, 30))
@@ -81,7 +70,7 @@ class PaginaEstoque(ctk.CTkFrame):
         # Cabeçalho da Tabela
         self.criar_cabecalho_tabela()
 
-        # Área de Rolagem
+        # Área de Rolagem (Linhas)
         self.scroll_tabela = ctk.CTkScrollableFrame(
             self.frame_tabela, 
             fg_color="transparent", 
@@ -89,31 +78,33 @@ class PaginaEstoque(ctk.CTkFrame):
         )
         self.scroll_tabela.pack(expand=True, fill="both")
 
-        # Mock de dados (Matéria Prima)
-        self.dados_estoque = [
-            {"id": "001", "nome": "Leite Integral", "tipo": "Ingrediente", "un": "Litro", "qtd": 120, "min": 50},
-            {"id": "002", "nome": "Açúcar Cristal", "tipo": "Ingrediente", "un": "kg", "qtd": 45, "min": 20},
-            {"id": "003", "nome": "Liga Neutra", "tipo": "Aditivo", "un": "kg", "qtd": 2.5, "min": 5}, # Baixo estoque
-            {"id": "004", "nome": "Embalagem Picolé", "tipo": "Embalagem", "un": "Unid.", "qtd": 5000, "min": 1000},
-            {"id": "005", "nome": "Essência de Baunilha", "tipo": "Aromatizante", "un": "Litro", "qtd": 0.5, "min": 2}, # Crítico
+        # Mock de dados (Simulando banco de dados)
+        self.dados_produtos = [
+            {"id": "001", "nome": "Sorvete Chocolate 1L", "cat": "Sorvete", "preco": 25.00, "qtd": 12},
+            {"id": "002", "nome": "Picolé Limão", "cat": "Picolé", "preco": 3.50, "qtd": 50},
+            {"id": "003", "nome": "Açaí Copo 500ml", "cat": "Açaí", "preco": 18.00, "qtd": 8},
+            {"id": "004", "nome": "Granola Pacote", "cat": "Insumo", "preco": 12.90, "qtd": 5},
+            {"id": "005", "nome": "Calda Morango", "cat": "Outros", "preco": 8.50, "qtd": 20},
         ]
         
         self.carregar_tabela()
 
     def criar_cabecalho_tabela(self):
+        # Frame do cabeçalho
         header_frame = ctk.CTkFrame(self.frame_tabela, fg_color=COR_PAINEL, height=40, corner_radius=6)
         header_frame.pack(fill="x", pady=(0, 5))
 
-        # Colunas: ID, Material, Tipo, Unidade, Quantidade, Ações
+        # Definição das colunas (Titulo, Tamanho relativo)
         colunas = [
             ("ID", 0.1), 
-            ("MATERIAL / INSUMO", 0.35), 
-            ("TIPO", 0.15), 
-            ("UNIDADE", 0.1), 
-            ("QUANTIDADE", 0.2), 
-            ("AÇÕES", 0.1)
+            ("PRODUTO", 0.4), 
+            ("CATEGORIA", 0.2), 
+            ("PREÇO", 0.15), 
+            ("ESTOQUE", 0.15),
+            ("AÇÕES", 0.1) # Espaço para botões
         ]
 
+        # Configurar grid do cabeçalho
         for i, (col, peso) in enumerate(colunas):
             header_frame.grid_columnconfigure(i, weight=int(peso*100))
             label = ctk.CTkLabel(
@@ -125,44 +116,44 @@ class PaginaEstoque(ctk.CTkFrame):
             label.grid(row=0, column=i, padx=5, pady=8, sticky="w" if i != 5 else "e")
 
     def carregar_tabela(self, filtro=""):
+        # Limpar tabela atual
         for widget in self.scroll_tabela.winfo_children():
             widget.destroy()
 
-        for item in self.dados_estoque:
-            if filtro.lower() not in item["nome"].lower() and filtro not in item["id"]:
+        # Renderizar linhas
+        for produto in self.dados_produtos:
+            # Filtro simples
+            if filtro.lower() not in produto["nome"].lower() and filtro not in produto["id"]:
                 continue
-            self.criar_linha_tabela(item)
+
+            self.criar_linha_tabela(produto)
 
     def criar_linha_tabela(self, item):
         row = ctk.CTkFrame(self.scroll_tabela, fg_color=COR_BOTAO, corner_radius=6)
         row.pack(fill="x", pady=2)
 
-        pesos = [10, 35, 15, 10, 20, 10]
+        # Configuração de colunas idêntica ao cabeçalho
+        pesos = [10, 40, 20, 15, 15, 10]
         for i, p in enumerate(pesos):
             row.grid_columnconfigure(i, weight=p)
 
         # 1. ID
         ctk.CTkLabel(row, text=f"#{item['id']}", text_color=COR_TEXTO_SEC, font=ctk.CTkFont(family=FONTE, size=12)).grid(row=0, column=0, padx=10, pady=10, sticky="w")
         
-        # 2. Nome
+        # 2. Nome (Destaque)
         ctk.CTkLabel(row, text=item['nome'], text_color=COR_TEXTO, font=ctk.CTkFont(family=FONTE, weight="bold")).grid(row=0, column=1, padx=5, sticky="w")
         
-        # 3. Tipo
-        ctk.CTkLabel(row, text=item['tipo'], text_color=COR_TEXTO_SEC).grid(row=0, column=2, padx=5, sticky="w")
+        # 3. Categoria
+        ctk.CTkLabel(row, text=item['cat'], text_color=COR_TEXTO).grid(row=0, column=2, padx=5, sticky="w")
         
-        # 4. Unidade
-        ctk.CTkLabel(row, text=item['un'], text_color=COR_TEXTO).grid(row=0, column=3, padx=5, sticky="w")
+        # 4. Preço
+        ctk.CTkLabel(row, text=f"R$ {item['preco']:.2f}", text_color=COR_TEXTO).grid(row=0, column=3, padx=5, sticky="w")
 
-        # 5. Quantidade (Lógica de Cores: Crítico < Mínimo)
-        cor_qtd = COR_SUCESSO
-        if item['qtd'] <= item['min'] * 0.5: # 50% do minimo = Crítico
-            cor_qtd = COR_ERRO
-        elif item['qtd'] <= item['min']: # Abaixo do minimo = Alerta
-            cor_qtd = COR_AVISO if 'COR_AVISO' in globals() else "#FFA000" # Fallback laranja
-        
-        ctk.CTkLabel(row, text=f"{item['qtd']}", text_color=cor_qtd, font=ctk.CTkFont(weight="bold")).grid(row=0, column=4, padx=5, sticky="w")
+        # 5. Estoque (Com cor condicional)
+        cor_estoque = COR_SUCESSO if item['qtd'] > 10 else COR_ERRO
+        ctk.CTkLabel(row, text=f"{item['qtd']} un", text_color=cor_estoque, font=ctk.CTkFont(weight="bold")).grid(row=0, column=4, padx=5, sticky="w")
 
-        # 6. Ações
+        # 6. Ações (Botões)
         frame_acoes = ctk.CTkFrame(row, fg_color="transparent")
         frame_acoes.grid(row=0, column=5, padx=5, sticky="e")
 
@@ -172,12 +163,10 @@ class PaginaEstoque(ctk.CTkFrame):
         btn_del = ctk.CTkButton(frame_acoes, text="✖", width=30, height=30, fg_color=COR_PAINEL, text_color=COR_ERRO, hover_color="#FFCDD2", command=lambda: print(f"Deletar {item['id']}"))
         btn_del.pack(side="left", padx=2)
 
-    def filtrar_estoque(self):
+    def filtrar_produtos(self):
         termo = self.entry_busca.get()
         self.carregar_tabela(termo)
 
-    def adicionar_item(self):
-        print("Abrir modal de novo insumo...")
-
-    def movimentar_estoque(self):
-        print("Abrir modal de entrada/saída rápida...")
+    def adicionar_produto(self):
+        print("Abrir modal de cadastro aqui...")
+        # Aqui você pode abrir um CTkToplevel ou trocar de tela

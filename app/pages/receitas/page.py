@@ -1,11 +1,10 @@
-# app/pages/estoque/page.py
 import customtkinter as ctk
 from app.config.theme import (
     COR_FUNDO, COR_PAINEL, COR_TEXTO, COR_TEXTO_SEC, 
-    COR_BOTAO, COR_HOVER, FONTE, COR_SUCESSO, COR_ERRO, COR_AVISO
+    COR_BOTAO, COR_HOVER, FONTE, COR_SUCESSO, COR_ERRO
 )
 
-class PaginaEstoque(ctk.CTkFrame):
+class PaginaReceitas(ctk.CTkFrame):
     def __init__(self, master):
         super().__init__(master, fg_color=COR_FUNDO)
 
@@ -20,7 +19,7 @@ class PaginaEstoque(ctk.CTkFrame):
         self.header.grid(row=0, column=0, sticky="ew", padx=30, pady=(20, 10))
 
         ctk.CTkLabel(
-            self.header, text="Estoque • Matéria Prima",
+            self.header, text="Estoque • Receitas",
             font=ctk.CTkFont(family=FONTE, size=24, weight="bold"),
             text_color=COR_TEXTO
         ).pack(side="left")
@@ -34,7 +33,7 @@ class PaginaEstoque(ctk.CTkFrame):
         # Barra de Pesquisa
         self.entry_busca = ctk.CTkEntry(
             self.controls,
-            placeholder_text="Buscar material ou ingrediente...",
+            placeholder_text="Buscar receita por nome...",
             width=300,
             height=40,
             fg_color=COR_PAINEL,
@@ -48,32 +47,22 @@ class PaginaEstoque(ctk.CTkFrame):
             self.controls, text="🔍", width=40, height=40,
             fg_color=COR_PAINEL, hover_color=COR_HOVER,
             text_color=COR_TEXTO,
-            command=self.filtrar_estoque
+            command=self.filtrar_receitas
         )
         self.btn_buscar.pack(side="left")
 
-        # Botão Novo Item
+        # Botão Nova Receita
         self.btn_novo = ctk.CTkButton(
-            self.controls, text="+ Novo Item", height=40,
+            self.controls, text="+ Nova Receita", height=40,
             fg_color=COR_SUCESSO, hover_color="#1B5E20",
             text_color="white",
             font=ctk.CTkFont(family=FONTE, weight="bold"),
-            command=self.adicionar_item
+            command=self.adicionar_receita
         )
         self.btn_novo.pack(side="right")
 
-        # Botão Entrada/Saída Rápida (Opcional, mas útil para estoque)
-        self.btn_mov = ctk.CTkButton(
-            self.controls, text="⇄ Movimentar", height=40,
-            fg_color=COR_PAINEL, hover_color=COR_HOVER,
-            text_color=COR_TEXTO,
-            font=ctk.CTkFont(family=FONTE, weight="bold"),
-            command=self.movimentar_estoque
-        )
-        self.btn_mov.pack(side="right", padx=10)
-
         # -------------------------
-        # 3. Tabela de Estoque
+        # 3. Tabela de Receitas
         # -------------------------
         self.frame_tabela = ctk.CTkFrame(self, fg_color="transparent")
         self.frame_tabela.grid(row=2, column=0, sticky="nsew", padx=30, pady=(0, 30))
@@ -89,13 +78,13 @@ class PaginaEstoque(ctk.CTkFrame):
         )
         self.scroll_tabela.pack(expand=True, fill="both")
 
-        # Mock de dados (Matéria Prima)
-        self.dados_estoque = [
-            {"id": "001", "nome": "Leite Integral", "tipo": "Ingrediente", "un": "Litro", "qtd": 120, "min": 50},
-            {"id": "002", "nome": "Açúcar Cristal", "tipo": "Ingrediente", "un": "kg", "qtd": 45, "min": 20},
-            {"id": "003", "nome": "Liga Neutra", "tipo": "Aditivo", "un": "kg", "qtd": 2.5, "min": 5}, # Baixo estoque
-            {"id": "004", "nome": "Embalagem Picolé", "tipo": "Embalagem", "un": "Unid.", "qtd": 5000, "min": 1000},
-            {"id": "005", "nome": "Essência de Baunilha", "tipo": "Aromatizante", "un": "Litro", "qtd": 0.5, "min": 2}, # Crítico
+        # Mock de dados (Simulação)
+        self.dados_receitas = [
+            {"id": "001", "nome": "Base Sorvete Nata", "rendimento": "10 Litros", "custo": 45.90},
+            {"id": "002", "nome": "Calda de Morango Artesanal", "rendimento": "2.5 Litros", "custo": 18.50},
+            {"id": "003", "nome": "Mousse de Maracujá", "rendimento": "15 Unidades", "custo": 22.00},
+            {"id": "004", "nome": "Casquinha Crocante", "rendimento": "100 Unidades", "custo": 12.30},
+            {"id": "005", "nome": "Ganache de Chocolate", "rendimento": "3 kg", "custo": 55.00},
         ]
         
         self.carregar_tabela()
@@ -104,13 +93,12 @@ class PaginaEstoque(ctk.CTkFrame):
         header_frame = ctk.CTkFrame(self.frame_tabela, fg_color=COR_PAINEL, height=40, corner_radius=6)
         header_frame.pack(fill="x", pady=(0, 5))
 
-        # Colunas: ID, Material, Tipo, Unidade, Quantidade, Ações
+        # Definição das colunas para Receitas
         colunas = [
             ("ID", 0.1), 
-            ("MATERIAL / INSUMO", 0.35), 
-            ("TIPO", 0.15), 
-            ("UNIDADE", 0.1), 
-            ("QUANTIDADE", 0.2), 
+            ("NOME DA RECEITA", 0.45), 
+            ("RENDIMENTO", 0.2), 
+            ("CUSTO EST.", 0.15), 
             ("AÇÕES", 0.1)
         ]
 
@@ -122,13 +110,13 @@ class PaginaEstoque(ctk.CTkFrame):
                 font=ctk.CTkFont(family=FONTE, size=12, weight="bold"),
                 text_color=COR_TEXTO_SEC
             )
-            label.grid(row=0, column=i, padx=5, pady=8, sticky="w" if i != 5 else "e")
+            label.grid(row=0, column=i, padx=5, pady=8, sticky="w" if i != 4 else "e")
 
     def carregar_tabela(self, filtro=""):
         for widget in self.scroll_tabela.winfo_children():
             widget.destroy()
 
-        for item in self.dados_estoque:
+        for item in self.dados_receitas:
             if filtro.lower() not in item["nome"].lower() and filtro not in item["id"]:
                 continue
             self.criar_linha_tabela(item)
@@ -137,7 +125,7 @@ class PaginaEstoque(ctk.CTkFrame):
         row = ctk.CTkFrame(self.scroll_tabela, fg_color=COR_BOTAO, corner_radius=6)
         row.pack(fill="x", pady=2)
 
-        pesos = [10, 35, 15, 10, 20, 10]
+        pesos = [10, 45, 20, 15, 10]
         for i, p in enumerate(pesos):
             row.grid_columnconfigure(i, weight=p)
 
@@ -147,37 +135,27 @@ class PaginaEstoque(ctk.CTkFrame):
         # 2. Nome
         ctk.CTkLabel(row, text=item['nome'], text_color=COR_TEXTO, font=ctk.CTkFont(family=FONTE, weight="bold")).grid(row=0, column=1, padx=5, sticky="w")
         
-        # 3. Tipo
-        ctk.CTkLabel(row, text=item['tipo'], text_color=COR_TEXTO_SEC).grid(row=0, column=2, padx=5, sticky="w")
+        # 3. Rendimento
+        ctk.CTkLabel(row, text=item['rendimento'], text_color=COR_TEXTO).grid(row=0, column=2, padx=5, sticky="w")
         
-        # 4. Unidade
-        ctk.CTkLabel(row, text=item['un'], text_color=COR_TEXTO).grid(row=0, column=3, padx=5, sticky="w")
+        # 4. Custo
+        ctk.CTkLabel(row, text=f"R$ {item['custo']:.2f}", text_color=COR_TEXTO).grid(row=0, column=3, padx=5, sticky="w")
 
-        # 5. Quantidade (Lógica de Cores: Crítico < Mínimo)
-        cor_qtd = COR_SUCESSO
-        if item['qtd'] <= item['min'] * 0.5: # 50% do minimo = Crítico
-            cor_qtd = COR_ERRO
-        elif item['qtd'] <= item['min']: # Abaixo do minimo = Alerta
-            cor_qtd = COR_AVISO if 'COR_AVISO' in globals() else "#FFA000" # Fallback laranja
-        
-        ctk.CTkLabel(row, text=f"{item['qtd']}", text_color=cor_qtd, font=ctk.CTkFont(weight="bold")).grid(row=0, column=4, padx=5, sticky="w")
-
-        # 6. Ações
+        # 5. Ações
         frame_acoes = ctk.CTkFrame(row, fg_color="transparent")
-        frame_acoes.grid(row=0, column=5, padx=5, sticky="e")
+        frame_acoes.grid(row=0, column=4, padx=5, sticky="e")
 
+        # Botão Editar (Lápis)
         btn_edit = ctk.CTkButton(frame_acoes, text="✎", width=30, height=30, fg_color=COR_PAINEL, text_color=COR_TEXTO, hover_color=COR_HOVER, command=lambda: print(f"Editar {item['id']}"))
         btn_edit.pack(side="left", padx=2)
         
+        # Botão Excluir (X)
         btn_del = ctk.CTkButton(frame_acoes, text="✖", width=30, height=30, fg_color=COR_PAINEL, text_color=COR_ERRO, hover_color="#FFCDD2", command=lambda: print(f"Deletar {item['id']}"))
         btn_del.pack(side="left", padx=2)
 
-    def filtrar_estoque(self):
+    def filtrar_receitas(self):
         termo = self.entry_busca.get()
         self.carregar_tabela(termo)
 
-    def adicionar_item(self):
-        print("Abrir modal de novo insumo...")
-
-    def movimentar_estoque(self):
-        print("Abrir modal de entrada/saída rápida...")
+    def adicionar_receita(self):
+        print("Abrir modal de nova receita...")

@@ -5,8 +5,8 @@ from app.pages.placeholder import PlaceholderPage
 from app.pages.relatorios.page import PaginaAdminRelatorios
 from app.pages.funcionarios.page import PaginaFuncionarios
 from app.pages.balcao.page import PaginaVendasBalcao
-from app.pages.estoque.produtos import PaginaProdutos
-from app.pages.estoque.receitas import PaginaReceitas
+from app.pages.produtos.page import PaginaProdutos
+from app.pages.receitas.page import PaginaReceitas
 from app.pages.estoque.page import PaginaEstoque
 
 

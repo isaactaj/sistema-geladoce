@@ -1,8 +1,6 @@
 # main.py
 import customtkinter as ctk
 from pathlib import Path
-
-# Imports do projeto
 from app.config import theme
 from app.ui.sidebar import MenuLateral
 from app.core.navigation import Navigation

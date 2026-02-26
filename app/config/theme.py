@@ -18,30 +18,22 @@ COR_TEXTO_SEC = "#6A6A6A"    # texto secundário
 FONTE = "Segoe UI"
 
 # ---- Cores semânticas (indicadores) ----
-COR_SUCESSO = "#2E7D32"      # verde
-COR_ERRO = "#C62828"         # vermelho
-
+COR_SUCESSO = "#2E7D32"      # verde (estoque cheio, lucro)
+COR_ERRO = "#C62828"         # vermelho (estoque critico, prejuizo)
+COR_AVISO = "#FFA000"        # laranja (estoque baixo)
 
 # ============================================================
-# Helpers opcionais (para manter padrão no app)
+# Helpers
 # ============================================================
 
 def cor_delta(delta: float | None) -> str:
-    """Retorna cor semântica para variação (delta)."""
-    if delta is None:
-        return COR_TEXTO_SEC
-    if delta > 0:
-        return COR_SUCESSO
-    if delta < 0:
-        return COR_ERRO
+    if delta is None: return COR_TEXTO_SEC
+    if delta > 0: return COR_SUCESSO
+    if delta < 0: return COR_ERRO
     return COR_TEXTO_SEC
 
-
 def fmt_dinheiro(valor: float) -> str:
-    """Formata R$ no padrão PT-BR simples."""
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-
 def fmt_percentual(delta: float) -> str:
-    """delta em decimal: 0.12 -> '12%' """
     return f"{delta * 100:.0f}%"
