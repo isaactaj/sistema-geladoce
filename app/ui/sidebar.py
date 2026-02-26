@@ -184,7 +184,7 @@ class MenuLateral(ctk.CTkFrame):
         if os.path.exists(logo_path):
             self.logo_img = ctk.CTkImage(
                 light_image=Image.open(logo_path),
-                size=(160, 60),
+                size=(160, 80),
             )
             ctk.CTkLabel(self, image=self.logo_img, text="").grid(
                 row=1, column=0, padx=20, pady=(0, 15), sticky="w"
