@@ -9,6 +9,7 @@ from app.pages.estoque.produtos import PaginaProdutos
 from app.pages.estoque.receitas import PaginaReceitas
 from app.pages.estoque.page import PaginaEstoque
 from app.pages.inicio.page import PaginaInicio
+from app.pages.fidelidade.page import PaginaFidelidade
 
 class Navigation(ctk.CTkFrame):
     """
@@ -32,7 +33,8 @@ class Navigation(ctk.CTkFrame):
             "produtos": PaginaProdutos,
             "receitas": PaginaReceitas,
             "estoque": PaginaEstoque,
-            "inicio": PaginaInicio
+            "inicio": PaginaInicio,
+            "fidelidade": PaginaFidelidade
         }
 
         # começa no início
