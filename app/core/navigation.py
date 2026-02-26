@@ -10,6 +10,7 @@ from app.pages.estoque.receitas import PaginaReceitas
 from app.pages.estoque.page import PaginaEstoque
 from app.pages.inicio.page import PaginaInicio
 from app.pages.fechamento.page import PaginaFechamento
+from app.pages.servicos.page import PaginaAgendamentoCarrinhos
 
 class Navigation(ctk.CTkFrame):
     """
@@ -34,7 +35,8 @@ class Navigation(ctk.CTkFrame):
             "receitas": PaginaReceitas,
             "estoque": PaginaEstoque,
             "inicio": PaginaInicio,
-            "fechamento": PaginaFechamento
+            "fechamento": PaginaFechamento,
+            "servicos": PaginaAgendamentoCarrinhos
         }
 
         # começa no início
