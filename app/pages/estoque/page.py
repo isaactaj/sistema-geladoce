@@ -1,11 +1,11 @@
 import customtkinter as ctk
 from tkinter import ttk
 from CTkMessagebox import CTkMessagebox
-from app.config.theme import COR_FUNDO, COR_TEXTO, FONTE
+from app.config.theme import theme
 
 class PaginaEstoque(ctk.CTkFrame):
     def __init__(self, master, chave="estoque"):
-        super().__init__(master, fg_color=COR_FUNDO)
+        super().__init__(master, fg_color=theme["COR_FUNDO"])
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1) # Faz a tabela expandir
 
@@ -17,20 +17,62 @@ class PaginaEstoque(ctk.CTkFrame):
         ctk.CTkLabel(
             self,
             text="Gerenciamento de Estoque",
-            font=ctk.CTkFont(family=FONTE, size=24, weight="bold"),
-            text_color=COR_TEXTO
+            font=ctk.CTkFont(family=theme["FONTE"], size=24, weight="bold"),
+            text_color=theme["COR_TEXTO"]
         ).grid(row=0, column=0, padx=30, pady=(30, 20), sticky="w")
         
-        # --- 2. FRAME DE BOTÕES DE AÇÕES ---
+        # --- 1.5. FRAME DE PESQUISA ---
+        self.frame_pesquisa = ctk.CTkFrame(self, fg_color="transparent")
+        self.frame_pesquisa.grid(row=1, column=0, padx=30, pady=(10, 10), sticky="w")
+
+        # Campo de digitação da pesquisa
+        self.entry_pesquisa = ctk.CTkEntry(
+            self.frame_pesquisa,
+            placeholder_text="Pesquisar produto pelo nome...",
+            width=300,
+            font=ctk.CTkFont(family=theme["FONTE"], size=13)
+        )
+        self.entry_pesquisa.pack(side="left", padx=(0, 10))
+
+        # Botão de Pesquisar
+        self.btn_pesquisar = ctk.CTkButton(
+            self.frame_pesquisa,
+            text="Pesquisar",
+            width=100,
+            font=ctk.CTkFont(family=theme["FONTE"], size=13, weight="bold"),
+            command=self.acao_pesquisar
+        )
+        self.btn_pesquisar.pack(side="left", padx=(0, 10))
+
+        # Botão de Limpar Pesquisa (para voltar a ver todos os produtos)
+        self.btn_limpar_pesquisa = ctk.CTkButton(
+            self.frame_pesquisa,
+            text="Limpar",
+            width=80,
+            fg_color="gray",
+            hover_color="darkgray",
+            font=ctk.CTkFont(family=theme["FONTE"], size=13, weight="bold"),
+            command=self.acao_limpar_pesquisa
+        )
+        self.btn_limpar_pesquisa.pack(side="left")
+
+        # --- 2. FRAME DE BOTÕES DE AÇÕES (ATUALIZADO) ---
         self.frame_acoes = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_acoes.grid(row=1, column=0, padx=30, sticky="w")
+        # IMPORTANTE: Mudei a row aqui de 1 para 2 para ficar abaixo da pesquisa!
+        self.frame_acoes.grid(row=2, column=0, padx=30, pady=(0, 10), sticky="w") 
+        
+        # ... (aqui continua o código dos seus 4 botões de adicionar, editar, excluir, etc) ...
+
+        # # --- 2. FRAME DE BOTÕES DE AÇÕES ---
+        # self.frame_acoes = ctk.CTkFrame(self, fg_color="transparent")
+        # self.frame_acoes.grid(row=1, column=0, padx=30, sticky="w")
 
         self.btn_salvar = ctk.CTkButton(
             self.frame_acoes,
             text="+ Adicionar Produto",
-            fg_color="green",
-            hover_color="darkgreen",
-            font=ctk.CTkFont(family=FONTE, size=13, weight="bold"),
+            fg_color=theme["COR_BTN_SALVAR"],
+            hover_color=theme["COR_BTN_SALVAR_HOVER"],
+            font=ctk.CTkFont(family=theme["FONTE"], size=13, weight="bold"),
             command=self.acao_salvar
         )
         self.btn_salvar.pack(side="left", padx=(0, 10))
@@ -38,9 +80,9 @@ class PaginaEstoque(ctk.CTkFrame):
         self.btn_editar = ctk.CTkButton(
             self.frame_acoes, 
             text="Editar Produto", 
-            fg_color="#1f6aa5",     # Azul (padrão do CustomTkinter)
-            hover_color="#144870",  # Azul mais escuro para o hover
-            font=ctk.CTkFont(family=FONTE, size=13, weight="bold"),
+            fg_color=theme["COR_BTN_EDITAR"],
+            hover_color=theme["COR_BTN_EDITAR_HOVER"],
+            font=ctk.CTkFont(family=theme["FONTE"], size=13, weight="bold"),
             command=self.acao_editar
         )
         self.btn_editar.pack(side="left", padx=(0, 10)) # O padx=(0, 10) mantém o alinhamento perfeito
@@ -48,9 +90,9 @@ class PaginaEstoque(ctk.CTkFrame):
         self.btn_excluir = ctk.CTkButton(
             self.frame_acoes,
             text="- Excluir Selecionado",
-            fg_color="#d9534f",
-            hover_color="#c9302c",
-            font=ctk.CTkFont(family=FONTE, size=13, weight="bold"),
+            fg_color=theme["COR_BTN_EXCLUIR"],
+            hover_color=theme["COR_BTN_EXCLUIR_HOVER"],
+            font=ctk.CTkFont(family=theme["FONTE"], size=13, weight="bold"),
             command=self.acao_excluir
         )
         self.btn_excluir.pack(side="left", padx=(0, 10))
@@ -58,9 +100,9 @@ class PaginaEstoque(ctk.CTkFrame):
         self.btn_alerta = ctk.CTkButton(
             self.frame_acoes,
             text="Verificar Alertas",
-            fg_color="orange",
-            hover_color="darkgoldenrod",
-            font=ctk.CTkFont(family=FONTE, size=13, weight="bold"),
+            fg_color=theme["COR_BTN_ALERTA"],
+            hover_color=theme["COR_BTN_ALERTA_HOVER"],
+            font=ctk.CTkFont(family=theme["FONTE"], size=13, weight="bold"),
             command=self.acao_alerta
         )
         self.btn_alerta.pack(side="left") # O último botão não precisa de margem à direita
@@ -79,11 +121,11 @@ class PaginaEstoque(ctk.CTkFrame):
                         foreground="black", 
                         rowheight=30, 
                         fieldbackground="white",
-                        font=(FONTE, 11))
+                        font=(theme["FONTE"], 11))
         style.configure("Treeview.Heading", 
                         background="#C1ECFD", 
                         foreground="black", 
-                        font=(FONTE, 12, "bold"))
+                        font=(theme["FONTE"], 12, "bold"))
         style.map('Treeview', background=[('selected', '#14375e')])
 
         # Colunas da tabela
@@ -115,6 +157,27 @@ class PaginaEstoque(ctk.CTkFrame):
     # ------------------------------------------------
     # LÓGICA DE DADOS E EVENTOS
     # ------------------------------------------------
+
+    def acao_pesquisar(self):
+        # Pega o texto digitado, remove espaços em branco extras e transforma em minúsculas
+        termo_pesquisa = self.entry_pesquisa.get().strip().lower()
+        
+        # Limpa todos os itens atuais da tabela visualmente
+        for item in self.tabela.get_children():
+            self.tabela.delete(item)
+            
+        # Insere apenas os produtos que contêm o termo pesquisado no nome
+        for p in self.produtos:
+            # Transforma o nome do produto em minúsculo para a pesquisa não ser "case sensitive"
+            if termo_pesquisa in p["nome"].lower():
+                self.tabela.insert("", "end", iid=p["id"], values=(p["id"], p["nome"], p["qtd"], p["status"]))
+
+    def acao_limpar_pesquisa(self):
+        # Limpa o texto do campo de pesquisa
+        self.entry_pesquisa.delete(0, "end")
+        
+        # Chama a função padrão para mostrar todos os itens novamente
+        self.atualizar_tabela()
 
     def atualizar_tabela(self):
         # Limpa todos os itens atuais da tabela
