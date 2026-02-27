@@ -8,10 +8,15 @@ class PaginaFornecedores(ctk.CTkFrame):
         super().__init__(master, fg_color=theme.COR_FUNDO)
 
         # ===== Layout da página =====
-        self.grid_columnconfigure(0, weight=0)  # sem lista na página, só o formulário (coluna 1)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=0)
-        self.grid_rowconfigure(1, weight=1)
+        # 3 colunas: [espaço] [formulário] [espaço]
+        self.grid_columnconfigure(0, weight=1)  # espaçador esquerdo
+        self.grid_columnconfigure(1, weight=2)  # formulário ao centro
+        self.grid_columnconfigure(2, weight=1)  # espaçador direito
+
+        # Linhas: 0 título, 1 subtítulo, 2 formulário
+        self.grid_rowconfigure(0, weight=0)     # título não expande
+        self.grid_rowconfigure(1, weight=0)     # subtítulo não expande
+        self.grid_rowconfigure(2, weight=1)     # linha do formulário pode expandir (se quiser)
 
         # ===== "Banco" em memória =====
         self._proximo_id = 1
