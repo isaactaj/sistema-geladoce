@@ -2,6 +2,7 @@ import customtkinter as ctk
 from tkinter import ttk
 from CTkMessagebox import CTkMessagebox
 from app.config.theme import theme
+from app.config import theme
 
 class PaginaEstoque(ctk.CTkFrame):
     def __init__(self, master, chave="estoque"):
@@ -21,51 +22,10 @@ class PaginaEstoque(ctk.CTkFrame):
             text_color=theme["COR_TEXTO"]
         ).grid(row=0, column=0, padx=30, pady=(30, 20), sticky="w")
         
-        # --- 1.5. FRAME DE PESQUISA ---
-        self.frame_pesquisa = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_pesquisa.grid(row=1, column=0, padx=30, pady=(10, 10), sticky="w")
-
-        # Campo de digitação da pesquisa
-        self.entry_pesquisa = ctk.CTkEntry(
-            self.frame_pesquisa,
-            placeholder_text="Pesquisar produto pelo nome...",
-            width=300,
-            font=ctk.CTkFont(family=theme["FONTE"], size=13)
-        )
-        self.entry_pesquisa.pack(side="left", padx=(0, 10))
-
-        # Botão de Pesquisar
-        self.btn_pesquisar = ctk.CTkButton(
-            self.frame_pesquisa,
-            text="Pesquisar",
-            width=100,
-            font=ctk.CTkFont(family=theme["FONTE"], size=13, weight="bold"),
-            command=self.acao_pesquisar
-        )
-        self.btn_pesquisar.pack(side="left", padx=(0, 10))
-
-        # Botão de Limpar Pesquisa (para voltar a ver todos os produtos)
-        self.btn_limpar_pesquisa = ctk.CTkButton(
-            self.frame_pesquisa,
-            text="Limpar",
-            width=80,
-            fg_color="gray",
-            hover_color="darkgray",
-            font=ctk.CTkFont(family=theme["FONTE"], size=13, weight="bold"),
-            command=self.acao_limpar_pesquisa
-        )
-        self.btn_limpar_pesquisa.pack(side="left")
-
-        # --- 2. FRAME DE BOTÕES DE AÇÕES (ATUALIZADO) ---
-        self.frame_acoes = ctk.CTkFrame(self, fg_color="transparent")
-        # IMPORTANTE: Mudei a row aqui de 1 para 2 para ficar abaixo da pesquisa!
-        self.frame_acoes.grid(row=2, column=0, padx=30, pady=(0, 10), sticky="w") 
         
-        # ... (aqui continua o código dos seus 4 botões de adicionar, editar, excluir, etc) ...
-
         # # --- 2. FRAME DE BOTÕES DE AÇÕES ---
-        # self.frame_acoes = ctk.CTkFrame(self, fg_color="transparent")
-        # self.frame_acoes.grid(row=1, column=0, padx=30, sticky="w")
+        self.frame_acoes = ctk.CTkFrame(self, fg_color="transparent")
+        self.frame_acoes.grid(row=1, column=0, padx=30, sticky="w")
 
         self.btn_salvar = ctk.CTkButton(
             self.frame_acoes,
@@ -157,27 +117,6 @@ class PaginaEstoque(ctk.CTkFrame):
     # ------------------------------------------------
     # LÓGICA DE DADOS E EVENTOS
     # ------------------------------------------------
-
-    def acao_pesquisar(self):
-        # Pega o texto digitado, remove espaços em branco extras e transforma em minúsculas
-        termo_pesquisa = self.entry_pesquisa.get().strip().lower()
-        
-        # Limpa todos os itens atuais da tabela visualmente
-        for item in self.tabela.get_children():
-            self.tabela.delete(item)
-            
-        # Insere apenas os produtos que contêm o termo pesquisado no nome
-        for p in self.produtos:
-            # Transforma o nome do produto em minúsculo para a pesquisa não ser "case sensitive"
-            if termo_pesquisa in p["nome"].lower():
-                self.tabela.insert("", "end", iid=p["id"], values=(p["id"], p["nome"], p["qtd"], p["status"]))
-
-    def acao_limpar_pesquisa(self):
-        # Limpa o texto do campo de pesquisa
-        self.entry_pesquisa.delete(0, "end")
-        
-        # Chama a função padrão para mostrar todos os itens novamente
-        self.atualizar_tabela()
 
     def atualizar_tabela(self):
         # Limpa todos os itens atuais da tabela
