@@ -1,7 +1,6 @@
 import customtkinter as ctk
 from tkinter import ttk
 from CTkMessagebox import CTkMessagebox
-from app.config.theme import theme
 from app.config import theme
 
 class PaginaEstoque(ctk.CTkFrame):
