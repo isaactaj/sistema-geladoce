@@ -20,7 +20,7 @@ FONTE = "Segoe UI"
 # ---- Cores semânticas (indicadores) ----
 COR_SUCESSO = "#2E7D32"      # verde
 COR_ERRO = "#C62828"         # vermelho
-
+COR_AVISO = "#FFA000"        # laranja (estoque baixo)
 
 # ============================================================
 # Helpers opcionais (para manter padrão no app)

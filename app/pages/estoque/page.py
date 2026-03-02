@@ -1,213 +1,328 @@
-# app/pages/estoque/page.py
 import customtkinter as ctk
-from datetime import datetime
-
-from app.config.theme import (
-    COR_FUNDO, COR_PAINEL, COR_TEXTO, COR_TEXTO_SEC, 
-    COR_BOTAO, COR_HOVER, COR_SUCESSO, COR_ERRO, FONTE
-)
+from tkinter import ttk
+from CTkMessagebox import CTkMessagebox
+from app.config import theme
 
 class PaginaEstoque(ctk.CTkFrame):
-    def __init__(self, master):
-        super().__init__(master, fg_color=COR_FUNDO)
-
-        # Configuração do Grid Principal
+    def __init__(self, master, chave="estoque"):
+        super().__init__(master, fg_color=theme.COR_FUNDO)
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1) # A tabela cresce
+        self.grid_rowconfigure(2, weight=1) # Faz a tabela expandir
 
-        # --- 1. Cabeçalho ---
-        self._criar_cabecalho()
-
-        # --- 2. Filtros e Ações ---
-        self._criar_barra_acoes()
-
-        # --- 3. Tabela (Lista de itens) ---
-        self._criar_tabela_estoque()
-        
-        # Carregar dados iniciais (simulação)
-        self.carregar_dados()
-
-    def _criar_cabecalho(self):
-        frame_topo = ctk.CTkFrame(self, fg_color="transparent")
-        frame_topo.grid(row=0, column=0, sticky="ew", padx=30, pady=(20, 10))
-
-        ctk.CTkLabel(
-            frame_topo, 
-            text="Estoque • Gerenciamento",
-            font=ctk.CTkFont(family=FONTE, size=24, weight="bold"),
-            text_color=COR_TEXTO
-        ).pack(side="left")
-
-        # Exemplo de KPI rápido no topo
-        self.lbl_status = ctk.CTkLabel(
-            frame_topo,
-            text="2 itens com estoque baixo",
-            font=ctk.CTkFont(family=FONTE, size=12, weight="bold"),
-            text_color=COR_ERRO
-        )
-        self.lbl_status.pack(side="right", anchor="e")
-
-    def _criar_barra_acoes(self):
-        frame_acoes = ctk.CTkFrame(self, fg_color="transparent")
-        frame_acoes.grid(row=1, column=0, sticky="ew", padx=30, pady=(0, 15))
-        
-        # Campo de Busca
-        self.entry_busca = ctk.CTkEntry(
-            frame_acoes, 
-            placeholder_text="Buscar item...",
-            width=250,
-            height=34,
-            border_color=COR_PAINEL
-        )
-        self.entry_busca.pack(side="left", padx=(0, 10))
-        
-        # Filtro de Categoria
-        self.combo_filtro = ctk.CTkComboBox(
-            frame_acoes,
-            values=["Todos", "Matéria Prima", "Embalagem", "Produto Final"],
-            width=150,
-            command=self.aplicar_filtro
-        )
-        self.combo_filtro.pack(side="left")
-
-        # Botão Novo Item
-        btn_novo = ctk.CTkButton(
-            frame_acoes,
-            text="+ Novo Movimento",
-            height=34,
-            fg_color=COR_PAINEL,
-            text_color=COR_TEXTO,
-            hover_color=COR_HOVER,
-            font=ctk.CTkFont(family=FONTE, size=13, weight="bold"),
-            command=self.abrir_modal_movimento
-        )
-        btn_novo.pack(side="right")
-
-    def _criar_tabela_estoque(self):
-        # Container da "Tabela"
-        self.frame_lista_container = ctk.CTkFrame(self, fg_color=COR_PAINEL, corner_radius=10)
-        self.frame_lista_container.grid(row=2, column=0, sticky="nsew", padx=30, pady=(0, 30))
-        self.frame_lista_container.grid_columnconfigure(0, weight=1)
-        self.frame_lista_container.grid_rowconfigure(1, weight=1)
-
-        # Cabeçalho da Tabela
-        header = ctk.CTkFrame(self.frame_lista_container, fg_color="transparent", height=40)
-        header.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
-        
-        colunas = [
-            ("Produto / Item", 3), 
-            ("Categoria", 2), 
-            ("Qtd. Atual", 1), 
-            ("Unidade", 1), 
-            ("Status", 1), 
-            ("Editar", 1)
+        self.produtos = [
         ]
+        self.proximo_id = 1
+
+        # --- 1. TÍTULO ---
+        ctk.CTkLabel(
+            self,
+            text="Gerenciamento de Estoque",
+            font=ctk.CTkFont(family=theme.FONTE, size=24, weight="bold"),
+            text_color=theme.COR_TEXTO
+        ).grid(row=0, column=0, padx=30, pady=(30, 20), sticky="w")
         
-        for idx, (titulo, peso) in enumerate(colunas):
-            lbl = ctk.CTkLabel(
-                header, 
-                text=titulo, 
-                font=ctk.CTkFont(family=FONTE, size=12, weight="bold"),
-                text_color=COR_TEXTO_SEC,
-                anchor="w" if idx < 2 else "center"
+        
+        # # --- 2. FRAME DE BOTÕES DE AÇÕES ---
+        self.frame_acoes = ctk.CTkFrame(self, fg_color="transparent")
+        self.frame_acoes.grid(row=1, column=0, padx=30, sticky="w")
+
+        self.btn_salvar = ctk.CTkButton(
+            self.frame_acoes,
+            text="+ Adicionar Produto",
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
+            command=self.acao_salvar
+        )
+        self.btn_salvar.pack(side="left", padx=(0, 10))
+
+        self.btn_editar = ctk.CTkButton(
+            self.frame_acoes, 
+            text="Editar Produto", 
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
+            command=self.acao_editar
+        )
+        self.btn_editar.pack(side="left", padx=(0, 10)) # O padx=(0, 10) mantém o alinhamento perfeito
+
+        self.btn_excluir = ctk.CTkButton(
+            self.frame_acoes,
+            text="- Excluir Selecionado",
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
+            command=self.acao_excluir
+        )
+        self.btn_excluir.pack(side="left", padx=(0, 10))
+
+        self.btn_alerta = ctk.CTkButton(
+            self.frame_acoes,
+            text="Verificar Alertas",
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
+            command=self.acao_alerta
+        )
+        self.btn_alerta.pack(side="left") # O último botão não precisa de margem à direita
+
+        # --- 3. TABELA (Treeview) ---
+        self.frame_tabela = ctk.CTkFrame(self)
+        self.frame_tabela.grid(row=2, column=0, padx=30, pady=20, sticky="nsew")
+        self.frame_tabela.grid_columnconfigure(0, weight=1)
+        self.frame_tabela.grid_rowconfigure(0, weight=1)
+
+        # Estilo para combinar com o tema do CTk
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("Treeview", 
+                        background="white", 
+                        foreground="black", 
+                        rowheight=30, 
+                        fieldbackground="white",
+                        font=(theme.FONTE, 11))
+        style.configure("Treeview.Heading", 
+                        background="#C1ECFD", 
+                        foreground="black", 
+                        font=(theme.FONTE, 12, "bold"))
+        style.map('Treeview', background=[('selected', '#14375e')])
+
+        # Colunas da tabela
+        colunas = ("id", "nome", "qtd", "status")
+        self.tabela = ttk.Treeview(self.frame_tabela, columns=colunas, show="headings", style="Treeview")
+        
+        # Configuração dos cabeçalhos
+        self.tabela.heading("id", text="ID")
+        self.tabela.heading("nome", text="Nome do Produto")
+        self.tabela.heading("qtd", text="Quantidade")
+        self.tabela.heading("status", text="Status")
+
+        # Configuração do tamanho das colunas
+        self.tabela.column("id", width=50, anchor="center")
+        self.tabela.column("nome", width=300, anchor="w")
+        self.tabela.column("qtd", width=100, anchor="center")
+        self.tabela.column("status", width=150, anchor="center")
+
+        self.tabela.grid(row=0, column=0, sticky="nsew")
+
+        # Scrollbar para a tabela
+        scrollbar = ttk.Scrollbar(self.frame_tabela, orient="vertical", command=self.tabela.yview)
+        self.tabela.configure(yscrollcommand=scrollbar.set)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # Preenche a tabela inicialmente
+        self.atualizar_tabela()
+
+    # ------------------------------------------------
+    # LÓGICA DE DADOS E EVENTOS
+    # ------------------------------------------------
+
+    def atualizar_tabela(self):
+        # Limpa todos os itens atuais da tabela
+        for item in self.tabela.get_children():
+            self.tabela.delete(item)
+            
+        # Insere os dados atualizados
+        for p in self.produtos:
+            self.tabela.insert("", "end", iid=p["id"], values=(p["id"], p["nome"], p["qtd"], p["status"]))
+
+    def acao_salvar(self):
+    
+        # Cria uma nova janela customizada (Pop-up)
+        janela_novo = ctk.CTkToplevel(self)
+        janela_novo.title("Novo Produto")
+        janela_novo.geometry("400x420")
+        janela_novo.attributes("-topmost", True) # Mantém a janela sempre no topo
+        janela_novo.focus() # Foca na nova janela
+
+        # --- CAMPO: NOME ---
+        ctk.CTkLabel(janela_novo, text="Nome do Produto:").pack(pady=(20, 5), padx=20, anchor="w")
+        entry_nome = ctk.CTkEntry(janela_novo, placeholder_text="Ex: Sorvete de Morango")
+        entry_nome.pack(fill="x", padx=20)
+
+        # --- CAMPO: QUANTIDADE ---
+        ctk.CTkLabel(janela_novo, text="Quantidade:").pack(pady=(10, 5), padx=20, anchor="w")
+        entry_qtd = ctk.CTkEntry(janela_novo, placeholder_text="Ex: 50")
+        entry_qtd.pack(fill="x", padx=20)
+
+        # --- CAMPO: STATUS ---
+        ctk.CTkLabel(janela_novo, text="Status:").pack(pady=(10, 5), padx=20, anchor="w")
+        combo_status = ctk.CTkOptionMenu(
+            janela_novo, 
+            values=["Cheio", "Normal", "Crítico"]
+        )
+        combo_status.set("Normal") # Status padrão
+        combo_status.pack(fill="x", padx=20)
+
+        # --- FUNÇÃO PARA SALVAR OS DADOS DA JANELA ---
+        def confirmar_salvamento():
+            nome = entry_nome.get()
+            qtd_str = entry_qtd.get()
+            status = combo_status.get()
+
+            # Validação simples para ver se os campos não estão vazios
+            if not nome or not qtd_str:
+                CTkMessagebox(title="Erro", message="Por favor, preencha o nome e a quantidade.", icon="cancel")
+                return
+            
+            # Validação para garantir que quantidade é número
+            try:
+                qtd = int(qtd_str)
+            except ValueError:
+                CTkMessagebox(title="Erro", message="A quantidade deve ser um número válido!", icon="cancel")
+                return
+
+            # Adiciona na "base de dados" simulada
+            novo_produto = {
+                "id": self.proximo_id, 
+                "nome": nome, 
+                "qtd": qtd, 
+                "status": status
+            }
+            self.produtos.append(novo_produto)
+            self.proximo_id += 1
+            
+            # Atualiza a visualização da tabela
+            self.atualizar_tabela()
+
+            # Fecha a janela de cadastro
+            janela_novo.destroy()
+
+            # Mostra mensagem de sucesso
+            CTkMessagebox(
+                title="Sucesso", 
+                message=f"Produto '{nome}' adicionado com sucesso!", 
+                icon="check"
             )
-            # Usamos pack com expand/fill proporcional ou grid. 
-            # Grid é melhor para alinhar com as linhas abaixo, mas aqui vou usar grid com peso.
-            header.grid_columnconfigure(idx, weight=peso)
-            lbl.grid(row=0, column=idx, sticky="ew", padx=5)
 
-        # Área rolável para as linhas
-        self.scroll_itens = ctk.CTkScrollableFrame(
-            self.frame_lista_container, 
-            fg_color="transparent"
-        )
-        self.scroll_itens.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
+        # --- BOTÃO DE SALVAR ---
+        btn_salvar = ctk.CTkButton(janela_novo, text="Salvar Produto", command=confirmar_salvamento)
+        btn_salvar.pack(pady=30)
+    
+    def acao_editar(self):
+        # Pega o item selecionado na tabela
+        selecao = self.tabela.selection()
         
-        # Configurar colunas do scroll igual ao header
-        for idx, (_, peso) in enumerate(colunas):
-            self.scroll_itens.grid_columnconfigure(idx, weight=peso)
+        if not selecao:
+            CTkMessagebox(title="Aviso", message="Por favor, selecione um produto na tabela para editar.", icon="warning")
+            return
 
-    def carregar_dados(self):
-        # Limpar lista atual
-        for widget in self.scroll_itens.winfo_children():
-            widget.destroy()
-
-        # Dados Mockados (Simulação de Banco de Dados)
-        dados = [
-            {"nome": "Leite Condensado", "cat": "Matéria Prima", "qtd": 45, "uni": "cx", "min": 20},
-            {"nome": "Creme de Leite", "cat": "Matéria Prima", "qtd": 12, "uni": "cx", "min": 30},
-            {"nome": "Embalagem 1L", "cat": "Embalagem", "qtd": 150, "uni": "un", "min": 50},
-            {"nome": "Chocolate 50%", "cat": "Matéria Prima", "qtd": 2.5, "uni": "kg", "min": 1.0},
-            {"nome": "Picolé Coco", "cat": "Produto Final", "qtd": 8, "uni": "un", "min": 20},
-            {"nome": "Açaí 500ml", "cat": "Produto Final", "qtd": 34, "uni": "un", "min": 10},
-            {"nome": "Liga Neutra", "cat": "Matéria Prima", "qtd": 500, "uni": "g", "min": 100},
-        ]
-
-        # Renderizar linhas
-        for i, item in enumerate(dados):
-            self._criar_linha_tabela(i, item)
-
-    def _criar_linha_tabela(self, index, item):
-        # Cor zebrada opcional ou fundo branco
-        bg_color = COR_BOTAO if index % 2 == 0 else "transparent"
+        item_id = int(selecao[0])
         
-        # Verificar status
-        status_texto = "OK"
-        status_cor = COR_SUCESSO
-        if item['qtd'] <= item['min']:
-            status_texto = "BAIXO"
-            status_cor = COR_ERRO
+        # Encontra o produto específico na nossa lista
+        produto_atual = next((p for p in self.produtos if p["id"] == item_id), None)
+        
+        if not produto_atual:
+            return
 
-        # Nome
-        ctk.CTkLabel(
-            self.scroll_itens, text=item['nome'], font=ctk.CTkFont(family=FONTE, size=13),
-            text_color=COR_TEXTO, anchor="w"
-        ).grid(row=index, column=0, sticky="ew", padx=5, pady=8)
+        # Cria a janela de edição
+        janela_editar = ctk.CTkToplevel(self)
+        janela_editar.title("Editar Produto")
+        janela_editar.geometry("400x420")
+        janela_editar.attributes("-topmost", True)
+        janela_editar.focus()
 
-        # Categoria
-        ctk.CTkLabel(
-            self.scroll_itens, text=item['cat'], font=ctk.CTkFont(family=FONTE, size=13),
-            text_color=COR_TEXTO_SEC, anchor="w"
-        ).grid(row=index, column=1, sticky="ew", padx=5, pady=8)
+        # --- CAMPO: NOME ---
+        ctk.CTkLabel(janela_editar, text="Nome do Produto:").pack(pady=(20, 5), padx=20, anchor="w")
+        entry_nome = ctk.CTkEntry(janela_editar)
+        entry_nome.insert(0, produto_atual["nome"]) # Preenche com o nome atual
+        entry_nome.pack(fill="x", padx=20)
 
-        # Qtd
-        ctk.CTkLabel(
-            self.scroll_itens, text=str(item['qtd']), font=ctk.CTkFont(family=FONTE, size=13, weight="bold"),
-            text_color=COR_TEXTO, anchor="center"
-        ).grid(row=index, column=2, sticky="ew", padx=5, pady=8)
+        # --- CAMPO: QUANTIDADE ---
+        ctk.CTkLabel(janela_editar, text="Quantidade:").pack(pady=(10, 5), padx=20, anchor="w")
+        entry_qtd = ctk.CTkEntry(janela_editar)
+        entry_qtd.insert(0, str(produto_atual["qtd"])) # Preenche com a qtd atual
+        entry_qtd.pack(fill="x", padx=20)
 
-        # Unidade
-        ctk.CTkLabel(
-            self.scroll_itens, text=item['uni'], font=ctk.CTkFont(family=FONTE, size=13),
-            text_color=COR_TEXTO_SEC, anchor="center"
-        ).grid(row=index, column=3, sticky="ew", padx=5, pady=8)
-
-        # Status (Badge)
-        frame_status = ctk.CTkFrame(self.scroll_itens, fg_color=status_cor, height=20, corner_radius=6)
-        frame_status.grid(row=index, column=4)
-        ctk.CTkLabel(
-            frame_status, text=status_texto, font=ctk.CTkFont(family=FONTE, size=10, weight="bold"),
-            text_color="white"
-        ).pack(padx=8, pady=2)
-
-        # Ações (Botão Editar)
-        btn_editar = ctk.CTkButton(
-            self.scroll_itens, text="✏️", width=30, height=30,
-            fg_color="transparent", hover_color=COR_HOVER,
-            text_color=COR_TEXTO,
-            command=lambda n=item['nome']: self.editar_item(n)
+        # --- CAMPO: STATUS ---
+        ctk.CTkLabel(janela_editar, text="Status:").pack(pady=(10, 5), padx=20, anchor="w")
+        combo_status = ctk.CTkOptionMenu(
+            janela_editar, 
+            values=["Cheio", "Normal", "Crítico"]
         )
-        btn_editar.grid(row=index, column=5)
+        combo_status.set(produto_atual["status"]) # Preenche com o status atual
+        combo_status.pack(fill="x", padx=20)
 
-        # Separador visual (opcional)
-        # ctk.CTkFrame(self.scroll_itens, height=1, fg_color="#E0E0E0").grid(row=index+1, column=0, columnspan=6, sticky="ew")
+        # --- FUNÇÃO PARA SALVAR A EDIÇÃO ---
+        def confirmar_edicao():
+            nome = entry_nome.get()
+            qtd_str = entry_qtd.get()
+            status = combo_status.get()
 
-    def aplicar_filtro(self, valor):
-        print(f"Filtrando por: {valor}")
-        # Aqui você implementaria a lógica de filtrar a lista 'dados' e chamar self.carregar_dados()
+            if not nome or not qtd_str:
+                CTkMessagebox(title="Erro", message="Por favor, preencha o nome e a quantidade.", icon="cancel")
+                return
+            
+            try:
+                qtd = int(qtd_str)
+            except ValueError:
+                CTkMessagebox(title="Erro", message="A quantidade deve ser um número válido!", icon="cancel")
+                return
 
-    def abrir_modal_movimento(self):
-        print("Abrir janela de entrada/saída de estoque")
+            # Atualiza os dados no dicionário original
+            produto_atual["nome"] = nome
+            produto_atual["qtd"] = qtd
+            produto_atual["status"] = status
+            
+            self.atualizar_tabela()
+            janela_editar.destroy()
 
-    def editar_item(self, nome_item):
-        print(f"Editando item: {nome_item}")
+            CTkMessagebox(title="Sucesso", message="Produto atualizado com sucesso!", icon="check")
+
+        # --- BOTÃO DE SALVAR EDIÇÃO ---
+        btn_salvar_edicao = ctk.CTkButton(janela_editar, text="Salvar Alterações", command=confirmar_edicao)
+        btn_salvar_edicao.pack(pady=30)
+    
+    def acao_excluir(self):
+        # Pega o item selecionado na tabela
+        selecao = self.tabela.selection()
+        
+        if not selecao:
+            CTkMessagebox(title="Aviso", message="Por favor, selecione um produto na tabela para excluir.", icon="warning")
+            return
+
+        item_id = int(selecao[0]) # O IID configurado é o próprio ID do produto
+
+        # Caixa de confirmação
+        msg = CTkMessagebox(
+            title="Atenção!", 
+            message="Tem certeza que deseja excluir o produto selecionado?\nEsta ação não pode ser desfeita.", 
+            icon="warning", 
+            option_1="Cancelar", 
+            option_2="Sim, Excluir"
+        )
+        
+        if msg.get() == "Sim, Excluir":
+            # Remove da "base de dados"
+            self.produtos = [p for p in self.produtos if p["id"] != item_id]
+            
+            # --- NOVA LÓGICA: REORGANIZA OS IDs ---
+            for index, p in enumerate(self.produtos):
+                p["id"] = index + 1 # Começa do 1 novamente e vai subindo
+            
+            # Atualiza o próximo ID disponível para não haver falhas nas novas adições
+            self.proximo_id = len(self.produtos) + 1
+            
+            # Atualiza a tabela
+            self.atualizar_tabela()
+            CTkMessagebox(title="Excluído", message="Produto excluído do estoque.", icon="info")
+
+    def acao_alerta(self):
+        # Filtra os produtos que estão com o status "Crítico" na nossa lista
+        produtos_criticos = [p["nome"] for p in self.produtos if p["status"] == "Crítico"]
+
+        if produtos_criticos:
+            # Monta a lista de nomes com quebra de linha e um tracinho
+            lista_nomes = "\n- ".join(produtos_criticos)
+            
+            CTkMessagebox(
+                title="Alerta de Estoque Crítico", 
+                message=f"Os seguintes produtos estão com status CRÍTICO e precisam de atenção:\n\n- {lista_nomes}", 
+                icon="cancel"
+            )
+        else:
+            CTkMessagebox(
+                title="Tudo certo", 
+                message="Nenhum produto está com o status 'Crítico' no momento.", 
+                icon="check"
+            )
