@@ -7,20 +7,19 @@ class PaginaProdutos(ctk.CTkFrame):
     def __init__(self, master, chave="produtos"):
         super().__init__(master, fg_color=theme.COR_FUNDO)
         self.grid_columnconfigure(0, weight=1)
-        # Ajustamos para a tabela crescer na linha 3 agora
         self.grid_rowconfigure(3, weight=1)
 
         self.lista_produtos = []
         self.proximo_id = 1
 
-        # --- 1. TÍTULO (Linha 0) ---
+        # --- 1. TÍTULO  ---
         ctk.CTkLabel(
             self, text="Catálogo de Produtos",
             font=ctk.CTkFont(family=theme.FONTE, size=24, weight="bold"),
             text_color=theme.COR_TEXTO
         ).grid(row=0, column=0, padx=30, pady=(30, 10), sticky="w")
         
-        # --- 2. BARRA DE PESQUISA (Linha 1) ---
+        # --- 2. BARRA DE PESQUISA  ---
         self.frame_busca = ctk.CTkFrame(self, fg_color="transparent")
         self.frame_busca.grid(row=1, column=0, padx=30, pady=(0, 10), sticky="ew")
 
@@ -30,17 +29,17 @@ class PaginaProdutos(ctk.CTkFrame):
         self.btn_buscar = ctk.CTkButton(
             self.frame_busca, text="Buscar", width=100,
             fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER,
-            command=self.acao_buscar
+            command=self.acao_buscar, text_color=theme.COR_TEXTO_ALT
         )
         self.btn_buscar.pack(side="left")
 
-        # --- 3. BOTÕES DE AÇÃO (Linha 2) ---
+        # --- 3. BOTÕES DE AÇÃO  ---
         self.frame_acoes = ctk.CTkFrame(self, fg_color="transparent")
         self.frame_acoes.grid(row=2, column=0, padx=30, pady=(0, 20), sticky="w")
 
         btn_config = {
             "fg_color": theme.COR_BOTAO, "hover_color": theme.COR_HOVER,
-            "font": ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"), "height": 34
+            "font": ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"), "height": 34, "text_color": theme.COR_TEXTO_ALT
         }
         pad_botoes = (0, 10)
 
@@ -56,7 +55,7 @@ class PaginaProdutos(ctk.CTkFrame):
         self.btn_info = ctk.CTkButton(self.frame_acoes, text="Resumo", command=self.acao_info, **btn_config)
         self.btn_info.pack(side="left", padx=pad_botoes)
 
-        # --- 4. TABELA (Linha 3) ---
+        # --- 4. TABELA  ---
         self.frame_tabela = ctk.CTkFrame(self)
         self.frame_tabela.grid(row=3, column=0, padx=30, pady=(0, 30), sticky="nsew")
         self.frame_tabela.grid_columnconfigure(0, weight=1)
