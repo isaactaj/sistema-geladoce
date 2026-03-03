@@ -1,820 +1,928 @@
+# -*- coding: utf-8 -*-
 """
 MÓDULO DE REVENDA - Sistema Geladoce
-=====================================
-Este módulo gerencia revendedores, registra vendas, calcula comissões
-e mantém histórico de transações com revendedores.
+===================================
 
-Funcionalidades:
-- Cadastro e edição de revendedores
-- Registro de vendas para revendedores
-- Cálculo automático de comissões
-- Visualização de histórico
-- Relatório de faturamento
+Aba "Nova Revenda" inspirada na página de Vendas no Balcão:
+- Catálogo de produtos à esquerda
+- Painel lateral de carrinho à direita
+- Vinculação opcional de cliente
+- Campos extras: revendedor, data/hora, pagamento, desconto, observação
+
+Aba "Histórico de Revendas":
+- Tabela com filtro por mês e ano
 """
 
 import customtkinter as ctk
 from tkinter import ttk, messagebox
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from app.config import theme
 
 
-
-
-
 class PaginaRevenda(ctk.CTkFrame):
-    """
-    Página principal de gerenciamento de revenda.
-    
-    Estrutura:
-    - Abas (Tabs): "Revendedores", "Registrar Venda", "Histórico", "Relatório"
-    - Cada aba tem sua própria lógica e UI
-    """
-    
     def __init__(self, master):
         super().__init__(master, fg_color=theme.COR_FUNDO)
-        
-        # Configurar grid para que a aba ocupe todo espaço
-        self.grid_rowconfigure(1, weight=1)
+
+        # Layout principal
         self.grid_columnconfigure(0, weight=1)
-        
-        # Estado da aplicação
+        self.grid_rowconfigure(1, weight=1)
+
+        # Estado geral
+        self.busca_var = ctk.StringVar(value="")
+        self.tipo_var = ctk.StringVar(value="Todos")
+        self.carrinho = []  # {id, nome, preco, qtd}
+
+        # Cliente opcional
+        self.vincular_cliente_var = ctk.BooleanVar(value=False)
+        self.cliente_busca_var = ctk.StringVar(value="")
+        self.cliente_selecionado = None
+        self._clientes_filtrados = []
+
+        # Dados mock
+        self.clientes = self._mock_clientes()
         self.revendedores = self._mock_revendedores()
-        self.vendas = self._mock_vendas()
         self.produtos = self._mock_produtos()
-        
-        # UI: Título
-        self._render_titulo()
-        
-        # UI: Abas
+        self.vendas = self._mock_vendas()
+
+        # UI
+        self._topo()
         self._render_abas()
-    
-    # ========================================
-    # SEÇÃO 1: UI PRINCIPAL
-    # ========================================
-    
-    def _render_titulo(self):
-        """
-        Renderiza o cabeçalho da página.
-        Exibe título e subtítulo da página de revenda.
-        """
+
+    # ==========================================================
+    # Helpers
+    # ==========================================================
+    def _fmt_moeda(self, valor):
+        try:
+            return theme.fmt_dinheiro(float(valor))
+        except Exception:
+            return "R$ 0,00"
+
+    def _obter_desconto(self):
+        if not hasattr(self, "entry_desconto"):
+            return Decimal("0")
+
+        texto = self.entry_desconto.get().strip().replace(".", "").replace(",", ".")
+        if not texto:
+            return Decimal("0")
+
+        try:
+            valor = Decimal(texto)
+            if valor < 0:
+                return Decimal("0")
+            return valor
+        except (InvalidOperation, ValueError):
+            return Decimal("0")
+
+    def _configurar_treeview(self):
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+
+        style.configure(
+            "Geladoce.Treeview",
+            font=(theme.FONTE, 12),
+            rowheight=30,
+            background=theme.COR_FUNDO,
+            fieldbackground=theme.COR_FUNDO,
+            foreground=theme.COR_TEXTO,
+            borderwidth=0,
+            relief="flat",
+        )
+        style.configure(
+            "Geladoce.Treeview.Heading",
+            font=(theme.FONTE, 12, "bold"),
+            background=theme.COR_HOVER,
+            foreground=theme.COR_TEXTO,
+            borderwidth=0,
+            relief="flat",
+        )
+        style.map(
+            "Geladoce.Treeview",
+            background=[("selected", theme.COR_HOVER)],
+            foreground=[("selected", theme.COR_TEXTO)],
+        )
+
+    # ==========================================================
+    # Topo e abas
+    # ==========================================================
+    def _topo(self):
         ctk.CTkLabel(
             self,
             text="Revenda",
             font=ctk.CTkFont(family=theme.FONTE, size=24, weight="bold"),
             text_color=theme.COR_TEXTO
-        ).grid(row=0, column=0, padx=30, pady=(14, 6), sticky="w")
-        
-        ctk.CTkLabel(
-            self,
-            text="Gerencie revendedores, registre vendas e acompanhe comissões.",
-            font=ctk.CTkFont(family=theme.FONTE, size=13),
-            text_color=theme.COR_TEXTO_SEC
-        ).grid(row=0, column=0, padx=30, pady=(35, 12), sticky="w")
-    
+        ).grid(row=0, column=0, padx=30, pady=(14, 4), sticky="w")
+
+
     def _render_abas(self):
-        """
-        Cria o sistema de abas (CTkTabview) com 4 seções principais.
-        Cada aba organiza um aspecto diferente da revenda.
-        """
-        # CTkTabview cria abas nativas do customtkinter
         self.tabview = ctk.CTkTabview(
             self,
             fg_color=theme.COR_PAINEL,
-            segmented_button_fg_color=theme.COR_PAINEL,
-            text_color=theme.COR_TEXTO
+            segmented_button_fg_color=theme.COR_BOTAO,
+            segmented_button_selected_color=theme.COR_SELECIONADO,
+            segmented_button_selected_hover_color=theme.COR_HOVER,
+            segmented_button_unselected_hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
         )
         self.tabview.grid(row=1, column=0, padx=30, pady=(0, 20), sticky="nsew")
-        
-        # Criar abas
-        aba_revendedores = self.tabview.add("Revendedores")
-        aba_venda = self.tabview.add("Registrar Venda")
-        aba_historico = self.tabview.add("Histórico")
-        aba_relatorio = self.tabview.add("Relatório")
-        
-        # Renderizar conteúdo de cada aba
-        self._render_aba_revendedores(aba_revendedores)
-        self._render_aba_venda(aba_venda)
+
+        aba_nova = self.tabview.add("Nova Revenda")
+        aba_historico = self.tabview.add("Histórico de Revendas")
+
+        self._render_aba_nova_revenda(aba_nova)
         self._render_aba_historico(aba_historico)
-        self._render_aba_relatorio(aba_relatorio)
-    
-    # ========================================
-    # SEÇÃO 2: ABA "REVENDEDORES"
-    # ========================================
-    
-    def _render_aba_revendedores(self, parent):
-        """
-        Aba para gerenciar revendedores.
-        Exibe lista de revendedores e botões para adicionar/editar/deletar.
-        """
-        # Frame superior com título e botão
-        top_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        top_frame.pack(fill="x", padx=20, pady=(20, 10))
-        top_frame.grid_columnconfigure(0, weight=1)
-        
+
+    # ==========================================================
+    # ABA 1 - Nova Revenda
+    # ==========================================================
+    def _render_aba_nova_revenda(self, parent):
+        # Layout igual à lógica da venda balcão
+        parent.grid_columnconfigure(0, weight=3)  # catálogo
+        parent.grid_columnconfigure(1, weight=2)  # carrinho/painel direito
+
+        parent.grid_rowconfigure(0, weight=0)  # filtros
+        parent.grid_rowconfigure(1, weight=1)  # catálogo cresce
+
+        self._configurar_treeview()
+
+        self._filtros(parent)
+        self._catalogo(parent)
+        self._painel_direito(parent)
+
+        self._render_catalogo()
+        self._render_carrinho()
+        self._toggle_cliente()
+
+    def _filtros(self, parent):
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.grid(row=0, column=0, padx=(30, 12), pady=(20, 10), sticky="ew")
+        frame.grid_columnconfigure(0, weight=1)
+
+        self.entry_busca = ctk.CTkEntry(
+            frame,
+            textvariable=self.busca_var,
+            placeholder_text="🔎 Buscar produto/sabor…",
+            height=36,
+            fg_color=theme.COR_FUNDO,
+            text_color=theme.COR_TEXTO,
+            border_color=theme.COR_HOVER,
+        )
+        self.entry_busca.grid(row=0, column=0, sticky="ew")
+        self.entry_busca.bind("<KeyRelease>", lambda e: self._render_catalogo())
+
+        self.combo_tipo = ctk.CTkComboBox(
+            frame,
+            values=["Todos", "Sorvete", "Picolé", "Açaí", "Outros"],
+            width=160,
+            command=lambda _: self._render_catalogo(),
+            state="readonly",
+            fg_color=theme.COR_FUNDO,
+            button_color=theme.COR_HOVER,
+            button_hover_color=theme.COR_SELECIONADO,
+            border_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            dropdown_fg_color=theme.COR_FUNDO,
+            dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO,
+        )
+        self.combo_tipo.set("Todos")
+        self.combo_tipo.grid(row=0, column=1, padx=(10, 0))
+
+    def _catalogo(self, parent):
+        box = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL, corner_radius=14)
+        box.grid(row=1, column=0, padx=(30, 12), pady=(0, 20), sticky="nsew")
+        box.grid_rowconfigure(0, weight=1)
+        box.grid_columnconfigure(0, weight=1)
+
+        self.tree = ttk.Treeview(
+            box,
+            style="Geladoce.Treeview",
+            columns=("preco", "estoque"),
+            show="tree headings"
+        )
+        self.tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+
+        self.tree.heading("#0", text="Produto")
+        self.tree.heading("preco", text="Preço")
+        self.tree.heading("estoque", text="Estoque")
+
+        self.tree.column("#0", width=280, anchor="w")
+        self.tree.column("preco", width=100, anchor="e")
+        self.tree.column("estoque", width=80, anchor="center")
+
+        scroll_y = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
+        scroll_y.grid(row=0, column=1, sticky="ns", padx=(0, 12), pady=12)
+        self.tree.configure(yscrollcommand=scroll_y.set)
+
+        self.tree.bind("<Double-1>", lambda e: self._adicionar_selecionado())
+        self.tree.tag_configure("sem_estoque", foreground="#888888")
+
+    def _painel_direito(self, parent):
+        box = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL, corner_radius=14)
+        box.grid(row=0, column=1, rowspan=2, padx=(12, 30), pady=(20, 20), sticky="nsew")
+        box.grid_columnconfigure(0, weight=1)
+
+        # Rows
+        box.grid_rowconfigure(0, weight=0)  # título
+        box.grid_rowconfigure(1, weight=0)  # cliente
+        box.grid_rowconfigure(2, weight=0)  # dados extras
+        box.grid_rowconfigure(3, weight=0)  # total
+        box.grid_rowconfigure(4, weight=1)  # lista carrinho
+        box.grid_rowconfigure(5, weight=0)  # ações
+
         ctk.CTkLabel(
-            top_frame,
-            text="Revendedores Cadastrados",
-            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
+            box,
+            text="Carrinho da Revenda",
+            font=ctk.CTkFont(family=theme.FONTE, size=16, weight="bold"),
+            text_color=theme.COR_TEXTO
+        ).grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
+
+        # ===== Cliente (opcional) =====
+        self.cliente_box = ctk.CTkFrame(box, fg_color=theme.COR_FUNDO, corner_radius=14)
+        self.cliente_box.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="ew")
+        self.cliente_box.grid_columnconfigure(0, weight=1)
+
+        top_line = ctk.CTkFrame(self.cliente_box, fg_color="transparent")
+        top_line.grid(row=0, column=0, padx=12, pady=(10, 6), sticky="ew")
+        top_line.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            top_line,
+            text="Cliente (opcional)",
+            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
             text_color=theme.COR_TEXTO
         ).grid(row=0, column=0, sticky="w")
-        
-        ctk.CTkButton(
-            top_frame,
-            text="+ Novo Revendedor",
-            width=150,
-            command=self._abrir_dialog_novo_revendedor
-        ).grid(row=0, column=1, sticky="e")
-        
-        # Tabela (Treeview) com revendedores
-        table_frame = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL)
-        table_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-        table_frame.grid_rowconfigure(0, weight=1)
-        table_frame.grid_columnconfigure(0, weight=1)
-        
-        # Configurar estilo da tabela
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Treeview", font=(theme.FONTE, 11), rowheight=28)
-        style.configure("Treeview.Heading", font=(theme.FONTE, 11, "bold"))
-        
-        # Criar tabela com colunas
-        self.tree_revendedores = ttk.Treeview(
-            table_frame,
-            columns=("nome", "contato", "endereco", "comissao"),
-            show="tree headings",
-            height=12
+
+        self.switch_cliente = ctk.CTkSwitch(
+            top_line,
+            text="Vincular",
+            variable=self.vincular_cliente_var,
+            command=self._toggle_cliente
         )
-        
-        # Definir cabeçalhos e largura
-        self.tree_revendedores.heading("#0", text="ID")
-        self.tree_revendedores.heading("nome", text="Nome")
-        self.tree_revendedores.heading("contato", text="Contato")
-        self.tree_revendedores.heading("endereco", text="Endereço")
-        self.tree_revendedores.heading("comissao", text="Comissão %")
-        
-        self.tree_revendedores.column("#0", width=40)
-        self.tree_revendedores.column("nome", width=150)
-        self.tree_revendedores.column("contato", width=120)
-        self.tree_revendedores.column("endereco", width=200)
-        self.tree_revendedores.column("comissao", width=80)
-        
-        self.tree_revendedores.pack(side="left", fill="both", expand=True)
-        
-        # Scrollbar
-        scrollbar = ttk.Scrollbar(
-            table_frame,
-            orient="vertical",
-            command=self.tree_revendedores.yview
+        self.switch_cliente.grid(row=0, column=1, sticky="e")
+
+        self.entry_cliente = ctk.CTkEntry(
+            self.cliente_box,
+            textvariable=self.cliente_busca_var,
+            placeholder_text="Buscar cliente por nome/telefone/CPF…",
+            height=34,
+            fg_color=theme.COR_FUNDO,
+            text_color=theme.COR_TEXTO,
+            border_color=theme.COR_HOVER,
         )
-        scrollbar.pack(side="right", fill="y")
-        self.tree_revendedores.configure(yscroll=scrollbar.set)
-        
-        # Preencher tabela com dados
-        self._atualizar_tree_revendedores()
-        
-        # Frame de botões
-        btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20, pady=(0, 20))
-        btn_frame.grid_columnconfigure(0, weight=1)
-        
-        ctk.CTkButton(
-            btn_frame,
-            text="Editar",
-            width=100,
-            command=self._editar_revendedor
-        ).grid(row=0, column=0, sticky="e", padx=(0, 10))
-        
-        ctk.CTkButton(
-            btn_frame,
-            text="Deletar",
-            width=100,
-            fg_color=theme.COR_ERRO,
-            command=self._deletar_revendedor
-        ).grid(row=0, column=1, sticky="e")
-    
-    def _atualizar_tree_revendedores(self):
-        """
-        Atualiza a tabela de revendedores com dados do estado.
-        Limpa a tabela e reinsere todos os revendedores.
-        """
-        # Limpar todos os itens
-        for item in self.tree_revendedores.get_children():
-            self.tree_revendedores.delete(item)
-        
-        # Inserir cada revendedor
-        for rev_id, rev_data in self.revendedores.items():
-            self.tree_revendedores.insert(
-                "",
-                "end",
-                iid=rev_id,
-                text=str(rev_id),
-                values=(
-                    rev_data["nome"],
-                    rev_data["contato"],
-                    rev_data["endereco"],
-                    f"{rev_data['comissao']}%"
-                )
-            )
-    
-    def _abrir_dialog_novo_revendedor(self):
-        """
-        Abre um diálogo para cadastrar um novo revendedor.
-        Cria uma janela flutuante com campos para preencher.
-        """
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("Novo Revendedor")
-        dialog.geometry("400x350")
-        dialog.resizable(False, False)
-        
-        # Centralizar dialog
-        dialog.grab_set()
-        
-        # Frame de campos
-        frame = ctk.CTkFrame(dialog, fg_color=theme.COR_FUNDO)
-        frame.pack(fill="both", expand=True, padx=20, pady=20)
-        frame.grid_columnconfigure(0, weight=1)
-        
-        # Campo: Nome
-        ctk.CTkLabel(frame, text="Nome", text_color=theme.COR_TEXTO).grid(
-            row=0, column=0, sticky="w", pady=(0, 5)
-        )
-        entry_nome = ctk.CTkEntry(frame, placeholder_text="Ex: João's Sorveteria")
-        entry_nome.grid(row=1, column=0, sticky="ew", pady=(0, 15))
-        
-        # Campo: Contato
-        ctk.CTkLabel(frame, text="Contato (Telefone/Email)", text_color=theme.COR_TEXTO).grid(
-            row=2, column=0, sticky="w", pady=(0, 5)
-        )
-        entry_contato = ctk.CTkEntry(frame, placeholder_text="(xx) 99999-9999")
-        entry_contato.grid(row=3, column=0, sticky="ew", pady=(0, 15))
-        
-        # Campo: Endereço
-        ctk.CTkLabel(frame, text="Endereço", text_color=theme.COR_TEXTO).grid(
-            row=4, column=0, sticky="w", pady=(0, 5)
-        )
-        entry_endereco = ctk.CTkEntry(frame, placeholder_text="Rua..., Cidade")
-        entry_endereco.grid(row=5, column=0, sticky="ew", pady=(0, 15))
-        
-        # Campo: Comissão (%)
-        ctk.CTkLabel(frame, text="Comissão (%)", text_color=theme.COR_TEXTO).grid(
-            row=6, column=0, sticky="w", pady=(0, 5)
-        )
-        entry_comissao = ctk.CTkEntry(frame, placeholder_text="Ex: 15")
-        entry_comissao.grid(row=7, column=0, sticky="ew", pady=(0, 20))
-        
-        # Frame de botões
-        btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        btn_frame.grid(row=8, column=0, sticky="ew")
-        btn_frame.grid_columnconfigure(0, weight=1)
-        
-        def salvar():
-            nome = entry_nome.get().strip()
-            contato = entry_contato.get().strip()
-            endereco = entry_endereco.get().strip()
-            comissao = entry_comissao.get().strip()
-            
-            # Validar
-            if not nome or not contato or not endereco or not comissao:
-                messagebox.showerror("Erro", "Preencha todos os campos!")
-                return
-            
-            try:
-                comissao = float(comissao)
-                if comissao < 0 or comissao > 100:
-                    raise ValueError
-            except ValueError:
-                messagebox.showerror("Erro", "Comissão deve ser um número entre 0 e 100!")
-                return
-            
-            # Adicionar revendedor
-            novo_id = max(self.revendedores.keys()) + 1 if self.revendedores else 1
-            self.revendedores[novo_id] = {
-                "nome": nome,
-                "contato": contato,
-                "endereco": endereco,
-                "comissao": comissao,
-                "data_cadastro": datetime.now().strftime("%d/%m/%Y %H:%M")
-            }
-            
-            self._atualizar_tree_revendedores()
-            messagebox.showinfo("Sucesso", "Revendedor cadastrado com sucesso!")
-            dialog.destroy()
-        
-        ctk.CTkButton(btn_frame, text="Salvar", command=salvar).pack(
-            side="right", padx=(5, 0)
-        )
-        ctk.CTkButton(
-            btn_frame,
-            text="Cancelar",
-            fg_color="gray",
-            command=dialog.destroy
-        ).pack(side="right")
-    
-    def _editar_revendedor(self):
-        """
-        Abre diálogo para editar um revendedor selecionado.
-        Verifica se há seleção e preenche campos com dados atuais.
-        """
-        selection = self.tree_revendedores.selection()
-        if not selection:
-            messagebox.showwarning("Aviso", "Selecione um revendedor!")
-            return
-        
-        rev_id = int(selection[0])
-        rev_data = self.revendedores[rev_id]
-        
-        dialog = ctk.CTkToplevel(self)
-        dialog.title(f"Editar Revendedor - {rev_data['nome']}")
-        dialog.geometry("400x350")
-        dialog.resizable(False, False)
-        dialog.grab_set()
-        
-        frame = ctk.CTkFrame(dialog, fg_color=theme.COR_FUNDO)
-        frame.pack(fill="both", expand=True, padx=20, pady=20)
-        frame.grid_columnconfigure(0, weight=1)
-        
-        # Campos pré-preenchidos
-        ctk.CTkLabel(frame, text="Nome", text_color=theme.COR_TEXTO).grid(
-            row=0, column=0, sticky="w", pady=(0, 5)
-        )
-        entry_nome = ctk.CTkEntry(frame)
-        entry_nome.insert(0, rev_data["nome"])
-        entry_nome.grid(row=1, column=0, sticky="ew", pady=(0, 15))
-        
-        ctk.CTkLabel(frame, text="Contato", text_color=theme.COR_TEXTO).grid(
-            row=2, column=0, sticky="w", pady=(0, 5)
-        )
-        entry_contato = ctk.CTkEntry(frame)
-        entry_contato.insert(0, rev_data["contato"])
-        entry_contato.grid(row=3, column=0, sticky="ew", pady=(0, 15))
-        
-        ctk.CTkLabel(frame, text="Endereço", text_color=theme.COR_TEXTO).grid(
-            row=4, column=0, sticky="w", pady=(0, 5)
-        )
-        entry_endereco = ctk.CTkEntry(frame)
-        entry_endereco.insert(0, rev_data["endereco"])
-        entry_endereco.grid(row=5, column=0, sticky="ew", pady=(0, 15))
-        
-        ctk.CTkLabel(frame, text="Comissão (%)", text_color=theme.COR_TEXTO).grid(
-            row=6, column=0, sticky="w", pady=(0, 5)
-        )
-        entry_comissao = ctk.CTkEntry(frame)
-        entry_comissao.insert(0, str(rev_data["comissao"]))
-        entry_comissao.grid(row=7, column=0, sticky="ew", pady=(0, 20))
-        
-        btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        btn_frame.grid(row=8, column=0, sticky="ew")
-        btn_frame.grid_columnconfigure(0, weight=1)
-        
-        def atualizar():
-            nome = entry_nome.get().strip()
-            contato = entry_contato.get().strip()
-            endereco = entry_endereco.get().strip()
-            comissao = entry_comissao.get().strip()
-            
-            if not nome or not contato or not endereco or not comissao:
-                messagebox.showerror("Erro", "Preencha todos os campos!")
-                return
-            
-            try:
-                comissao = float(comissao)
-                if comissao < 0 or comissao > 100:
-                    raise ValueError
-            except ValueError:
-                messagebox.showerror("Erro", "Comissão inválida!")
-                return
-            
-            self.revendedores[rev_id].update({
-                "nome": nome,
-                "contato": contato,
-                "endereco": endereco,
-                "comissao": comissao
-            })
-            
-            self._atualizar_tree_revendedores()
-            messagebox.showinfo("Sucesso", "Revendedor atualizado!")
-            dialog.destroy()
-        
-        ctk.CTkButton(btn_frame, text="Salvar", command=atualizar).pack(
-            side="right", padx=(5, 0)
-        )
-        ctk.CTkButton(
-            btn_frame,
-            text="Cancelar",
-            fg_color="gray",
-            command=dialog.destroy
-        ).pack(side="right")
-    
-    def _deletar_revendedor(self):
-        """
-        Deleta um revendedor selecionado com confirmação.
-        Pede aprovação antes de remover permanentemente.
-        """
-        selection = self.tree_revendedores.selection()
-        if not selection:
-            messagebox.showwarning("Aviso", "Selecione um revendedor!")
-            return
-        
-        rev_id = int(selection[0])
-        rev_nome = self.revendedores[rev_id]["nome"]
-        
-        if messagebox.askyesno("Confirmar", f"Deletar '{rev_nome}'?"):
-            del self.revendedores[rev_id]
-            self._atualizar_tree_revendedores()
-            messagebox.showinfo("Sucesso", "Revendedor deletado!")
-    
-    # ========================================
-    # SEÇÃO 3: ABA "REGISTRAR VENDA"
-    # ========================================
-    
-    def _render_aba_venda(self, parent):
-        """
-        Aba para registrar uma venda para um revendedor.
-        Permite selecionar revendedor, produtos, quantidade e calcula comissão.
-        """
-        parent.grid_rowconfigure(3, weight=1)
-        parent.grid_columnconfigure(0, weight=1)
-        
-        # Seção: Selecionar revendedor
-        ctk.CTkLabel(
-            parent,
-            text="Selecione o Revendedor",
-            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=0, column=0, padx=20, pady=(20, 10), sticky="w")
-        
-        rev_names = ["Selecionar..."] + [
-            r["nome"] for r in self.revendedores.values()
-        ]
-        self.combo_revendedor = ctk.CTkComboBox(
-            parent,
-            values=rev_names,
+        self.entry_cliente.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="ew")
+        self.entry_cliente.bind("<KeyRelease>", lambda e: self._atualizar_lista_clientes())
+
+        self.combo_cliente = ctk.CTkComboBox(
+            self.cliente_box,
+            values=["(nenhum)"],
+            command=lambda _: self._selecionar_cliente(),
             state="readonly",
-            width=300
+            fg_color=theme.COR_FUNDO,
+            button_color=theme.COR_HOVER,
+            button_hover_color=theme.COR_SELECIONADO,
+            border_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            dropdown_fg_color=theme.COR_FUNDO,
+            dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO,
         )
-        self.combo_revendedor.set("Selecionar...")
-        self.combo_revendedor.grid(row=0, column=0, padx=20, pady=(30, 20), sticky="ew")
-        
-        # Seção: Seleção de produtos
-        ctk.CTkLabel(
-            parent,
-            text="Adicione Produtos à Venda",
-            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=1, column=0, padx=20, pady=(20, 10), sticky="w")
-        
-        # Frame para seleção de produto
-        prod_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        prod_frame.grid(row=1, column=0, padx=20, pady=(30, 10), sticky="ew")
-        prod_frame.grid_columnconfigure(1, weight=1)
-        
-        self.combo_produto = ctk.CTkComboBox(
-            prod_frame,
-            values=list(self.produtos.keys()),
-            state="readonly"
+        self.combo_cliente.grid(row=2, column=0, padx=12, pady=(0, 8), sticky="ew")
+
+        self.lbl_cliente_sel = ctk.CTkLabel(
+            self.cliente_box,
+            text="Nenhum cliente vinculado",
+            font=ctk.CTkFont(family=theme.FONTE, size=12),
+            text_color=theme.COR_TEXTO_SEC
         )
-        self.combo_produto.set("Selecionar produto...")
-        self.combo_produto.grid(row=0, column=0, padx=(0, 10), sticky="ew")
-        
-        ctk.CTkLabel(
-            prod_frame,
-            text="Qtd:",
-            text_color=theme.COR_TEXTO
-        ).grid(row=0, column=2, padx=(10, 5))
-        
-        self.entry_qtd = ctk.CTkEntry(prod_frame, width=60, placeholder_text="1")
-        self.entry_qtd.grid(row=0, column=3, padx=(0, 10))
-        
-        ctk.CTkButton(
-            prod_frame,
-            text="+ Adicionar",
-            width=100,
-            command=self._adicionar_produto_venda
-        ).grid(row=0, column=4)
-        
-        # Tabela de produtos na venda
-        ctk.CTkLabel(
-            parent,
-            text="Produtos da Venda",
-            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=2, column=0, padx=20, pady=(20, 10), sticky="w")
-        
-        table_frame = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL)
-        table_frame.grid(row=3, column=0, padx=20, pady=(0, 20), sticky="nsew")
-        table_frame.grid_rowconfigure(0, weight=1)
-        table_frame.grid_columnconfigure(0, weight=1)
-        
-        style = ttk.Style()
-        style.configure("Treeview", font=(theme.FONTE, 10), rowheight=24)
-        
-        self.tree_venda = ttk.Treeview(
-            table_frame,
-            columns=("preco", "qtd", "total"),
-            show="tree headings",
-            height=8
+        self.lbl_cliente_sel.grid(row=3, column=0, padx=12, pady=(0, 10), sticky="w")
+
+        self.btn_remover_cliente = ctk.CTkButton(
+            self.cliente_box,
+            text="Remover cliente",
+            height=32,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+            command=self._remover_cliente
         )
-        self.tree_venda.heading("#0", text="Produto")
-        self.tree_venda.heading("preco", text="Preço")
-        self.tree_venda.heading("qtd", text="Qtd")
-        self.tree_venda.heading("total", text="Total")
-        
-        self.tree_venda.column("#0", width=200)
-        self.tree_venda.column("preco", width=100)
-        self.tree_venda.column("qtd", width=60)
-        self.tree_venda.column("total", width=100)
-        
-        self.tree_venda.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree_venda.yview)
-        scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=10)
-        self.tree_venda.configure(yscroll=scrollbar.set)
-        
-        self.venda_atual = []  # Armazenar produtos da venda atual
-        
-        # Seção: Resumo e finalização
-        resumo_frame = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL, corner_radius=10)
-        resumo_frame.grid(row=4, column=0, padx=20, pady=(0, 20), sticky="ew")
-        resumo_frame.grid_columnconfigure(1, weight=1)
-        
+        self.btn_remover_cliente.grid(row=4, column=0, padx=12, pady=(0, 12), sticky="ew")
+
+        # ===== Dados extras da revenda =====
+        self.dados_box = ctk.CTkFrame(box, fg_color=theme.COR_FUNDO, corner_radius=14)
+        self.dados_box.grid(row=2, column=0, padx=16, pady=(0, 10), sticky="ew")
+        self.dados_box.grid_columnconfigure(0, weight=1)
+        self.dados_box.grid_columnconfigure(1, weight=1)
+
         ctk.CTkLabel(
-            resumo_frame,
-            text="Total da Venda:",
-            font=ctk.CTkFont(family=theme.FONTE, size=11, weight="bold"),
+            self.dados_box,
+            text="Dados da Revenda",
+            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
             text_color=theme.COR_TEXTO
-        ).grid(row=0, column=0, padx=15, pady=10, sticky="w")
-        
-        self.label_total_venda = ctk.CTkLabel(
-            resumo_frame,
-            text="R$ 0,00",
-            font=ctk.CTkFont(family=theme.FONTE, size=11),
-            text_color=theme.COR_SUCESSO
-        )
-        self.label_total_venda.grid(row=0, column=1, padx=15, pady=10, sticky="e")
-        
+        ).grid(row=0, column=0, columnspan=2, padx=12, pady=(10, 8), sticky="w")
+
         ctk.CTkLabel(
-            resumo_frame,
-            text="Comissão (%):",
-            font=ctk.CTkFont(family=theme.FONTE, size=11, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=1, column=0, padx=15, pady=10, sticky="w")
-        
-        self.label_comissao_valor = ctk.CTkLabel(
-            resumo_frame,
-            text="R$ 0,00",
-            font=ctk.CTkFont(family=theme.FONTE, size=11),
-            text_color=theme.COR_SUCESSO
+            self.dados_box, text="Revendedor", text_color=theme.COR_TEXTO
+        ).grid(row=1, column=0, padx=12, pady=(0, 4), sticky="w")
+
+        self.combo_revendedor = ctk.CTkComboBox(
+            self.dados_box,
+            values=[r["nome"] for r in self.revendedores.values()],
+            state="readonly",
+            fg_color=theme.COR_FUNDO,
+            button_color=theme.COR_HOVER,
+            button_hover_color=theme.COR_SELECIONADO,
+            border_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            dropdown_fg_color=theme.COR_FUNDO,
+            dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO,
         )
-        self.label_comissao_valor.grid(row=1, column=1, padx=15, pady=10, sticky="e")
-        
-        # Botões
-        btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        btn_frame.grid(row=5, column=0, padx=20, pady=(0, 20), sticky="ew")
-        btn_frame.grid_columnconfigure(0, weight=1)
-        
-        ctk.CTkButton(
-            btn_frame,
-            text="Limpar",
-            width=100,
-            fg_color="gray",
+        self.combo_revendedor.grid(row=2, column=0, padx=12, pady=(0, 8), sticky="ew")
+        if self.revendedores:
+            self.combo_revendedor.set(next(iter(self.revendedores.values()))["nome"])
+
+        ctk.CTkLabel(
+            self.dados_box, text="Data/Hora", text_color=theme.COR_TEXTO
+        ).grid(row=1, column=1, padx=12, pady=(0, 4), sticky="w")
+
+        self.entry_data = ctk.CTkEntry(
+            self.dados_box,
+            height=34,
+            fg_color=theme.COR_FUNDO,
+            text_color=theme.COR_TEXTO,
+            border_color=theme.COR_HOVER,
+        )
+        self.entry_data.grid(row=2, column=1, padx=12, pady=(0, 8), sticky="ew")
+        self.entry_data.insert(0, datetime.now().strftime("%d/%m/%Y %H:%M"))
+
+        ctk.CTkLabel(
+            self.dados_box, text="Pagamento", text_color=theme.COR_TEXTO
+        ).grid(row=3, column=0, padx=12, pady=(0, 4), sticky="w")
+
+        self.combo_pag = ctk.CTkComboBox(
+            self.dados_box,
+            values=["Dinheiro", "Pix", "Cartão", "Prazo"],
+            state="readonly",
+            fg_color=theme.COR_FUNDO,
+            button_color=theme.COR_HOVER,
+            button_hover_color=theme.COR_SELECIONADO,
+            border_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            dropdown_fg_color=theme.COR_FUNDO,
+            dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO,
+        )
+        self.combo_pag.set("Pix")
+        self.combo_pag.grid(row=4, column=0, padx=12, pady=(0, 8), sticky="ew")
+
+        ctk.CTkLabel(
+            self.dados_box, text="Desconto (R$)", text_color=theme.COR_TEXTO
+        ).grid(row=3, column=1, padx=12, pady=(0, 4), sticky="w")
+
+        self.entry_desconto = ctk.CTkEntry(
+            self.dados_box,
+            height=34,
+            placeholder_text="0,00",
+            fg_color=theme.COR_FUNDO,
+            text_color=theme.COR_TEXTO,
+            border_color=theme.COR_HOVER,
+        )
+        self.entry_desconto.grid(row=4, column=1, padx=12, pady=(0, 8), sticky="ew")
+        self.entry_desconto.insert(0, "0,00")
+        self.entry_desconto.bind("<KeyRelease>", lambda e: self._render_carrinho())
+
+        ctk.CTkLabel(
+            self.dados_box, text="Observação", text_color=theme.COR_TEXTO
+        ).grid(row=5, column=0, columnspan=2, padx=12, pady=(0, 4), sticky="w")
+
+        self.entry_obs = ctk.CTkEntry(
+            self.dados_box,
+            height=34,
+            placeholder_text="Observações da revenda",
+            fg_color=theme.COR_FUNDO,
+            text_color=theme.COR_TEXTO,
+            border_color=theme.COR_HOVER,
+        )
+        self.entry_obs.grid(row=6, column=0, columnspan=2, padx=12, pady=(0, 12), sticky="ew")
+
+        # ===== Total =====
+        self.lbl_total = ctk.CTkLabel(
+            box,
+            text="Total: R$ 0,00",
+            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
+            text_color=theme.COR_TEXTO
+        )
+        self.lbl_total.grid(row=3, column=0, padx=16, pady=(0, 8), sticky="w")
+
+        # ===== Lista carrinho =====
+        self.lista_carrinho = ctk.CTkScrollableFrame(box, fg_color="transparent", height=220)
+        self.lista_carrinho.grid(row=4, column=0, padx=16, pady=(0, 12), sticky="nsew")
+
+        # ===== Ações =====
+        acoes = ctk.CTkFrame(box, fg_color="transparent")
+        acoes.grid(row=5, column=0, padx=16, pady=(0, 16), sticky="ew")
+        acoes.grid_columnconfigure((0, 1, 2), weight=1)
+
+        self.btn_remover_item = ctk.CTkButton(
+            acoes,
+            text="Remover último item",
+            height=38,
+            fg_color=theme.COR_ERRO,
+            hover_color=theme.COR_ERRO,
+            text_color="#FFFFFF",
+            command=self._remover_ultimo_item
+        )
+        self.btn_remover_item.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+
+        self.btn_limpar = ctk.CTkButton(
+            acoes,
+            text="Limpar venda",
+            height=38,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
             command=self._limpar_venda
-        ).pack(side="right", padx=(5, 0))
-        
-        ctk.CTkButton(
-            btn_frame,
-            text="Finalizar Venda",
-            width=150,
-            command=self._finalizar_venda
-        ).pack(side="right")
-    
-    def _adicionar_produto_venda(self):
-        """
-        Adiciona um produto selecionado à venda atual.
-        Valida quantidade e atualiza a tabela de produtos.
-        """
-        produto = self.combo_produto.get()
-        if produto == "Selecionar produto...":
-            messagebox.showwarning("Aviso", "Selecione um produto!")
-            return
-        
-        qtd_str = self.entry_qtd.get().strip()
-        if not qtd_str:
-            qtd_str = "1"
-        
-        try:
-            qtd = int(qtd_str)
-            if qtd <= 0:
-                raise ValueError
-        except ValueError:
-            messagebox.showerror("Erro", "Quantidade inválida!")
-            return
-        
-        preco = self.produtos[produto]
-        total = preco * qtd
-        
-        # Adicionar à venda
-        self.venda_atual.append({
-            "produto": produto,
-            "preco": preco,
-            "qtd": qtd,
-            "total": total
-        })
-        
-        # Atualizar Tree
-        self.tree_venda.insert(
-            "",
-            "end",
-            text=produto,
-            values=(
-                f"R$ {preco:.2f}".replace(".", ","),
-                qtd,
-                f"R$ {total:.2f}".replace(".", ",")
-            )
         )
-        
-        self.combo_produto.set("Selecionar produto...")
-        self.entry_qtd.delete(0, "end")
-        self.entry_qtd.insert(0, "1")
-        
-        self._atualizar_resumo_venda()
-    
-    def _atualizar_resumo_venda(self):
-        """
-        Recalcula o total da venda, comissão e atualiza os labels.
-        Chamado após adicionar ou remover produtos.
-        """
-        total_venda = sum(item["total"] for item in self.venda_atual)
-        
-        # Obter comissão do revendedor selecionado
-        rev_nome = self.combo_revendedor.get()
-        comissao_pct = 0
-        
-        if rev_nome != "Selecionar...":
-            for rev in self.revendedores.values():
-                if rev["nome"] == rev_nome:
-                    comissao_pct = rev["comissao"]
-                    break
-        
-        comissao_valor = (total_venda * comissao_pct) / 100
-        
-        # Atualizar labels
-        self.label_total_venda.configure(
-            text=f"R$ {total_venda:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        self.btn_limpar.grid(row=0, column=1, padx=6, sticky="ew")
+
+        self.btn_finalizar = ctk.CTkButton(
+            acoes,
+            text="Finalizar revenda",
+            height=38,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+            command=self._finalizar
         )
-        self.label_comissao_valor.configure(
-            text=f"R$ {comissao_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        )
-    
-    def _limpar_venda(self):
-        """
-        Limpa todos os produtos da venda atual e reseta a interface.
-        """
-        for item in self.tree_venda.get_children():
-            self.tree_venda.delete(item)
-        self.venda_atual = []
-        self.combo_produto.set("Selecionar produto...")
-        self.entry_qtd.delete(0, "end")
-        self.entry_qtd.insert(0, "1")
-        self._atualizar_resumo_venda()
-    
-    def _finalizar_venda(self):
-        """
-        Finaliza a venda registrando no histórico.
-        Valida dados e cria registro com timestamp.
-        """
-        rev_nome = self.combo_revendedor.get()
-        if rev_nome == "Selecionar...":
-            messagebox.showwarning("Aviso", "Selecione um revendedor!")
+        self.btn_finalizar.grid(row=0, column=2, padx=(6, 0), sticky="ew")
+
+    # ==========================================================
+    # Cliente opcional
+    # ==========================================================
+    def _toggle_cliente(self):
+        ligado = self.vincular_cliente_var.get()
+        estado = "normal" if ligado else "disabled"
+
+        self.entry_cliente.configure(state=estado)
+        self.combo_cliente.configure(state=estado)
+        self.btn_remover_cliente.configure(state=estado)
+
+        if not ligado:
+            self._remover_cliente()
+        else:
+            self._atualizar_lista_clientes()
+
+    def _atualizar_lista_clientes(self):
+        termo = self.cliente_busca_var.get().strip().lower()
+
+        opcoes = []
+        self._clientes_filtrados = []
+
+        for c in self.clientes:
+            texto = f'{c["nome"]} {c["cpf"]} {c["telefone"]}'.lower()
+            if not termo or termo in texto:
+                opcoes.append(f'{c["nome"]} • {c["telefone"]}')
+                self._clientes_filtrados.append(c)
+
+        if not opcoes:
+            opcoes = ["(nenhum encontrado)"]
+            self._clientes_filtrados = []
+
+        self.combo_cliente.configure(values=opcoes)
+        self.combo_cliente.set(opcoes[0])
+
+        if self._clientes_filtrados:
+            self._selecionar_cliente()
+        else:
+            self.cliente_selecionado = None
+            self.lbl_cliente_sel.configure(text="Nenhum cliente vinculado")
+
+    def _selecionar_cliente(self):
+        if not self._clientes_filtrados:
             return
-        
-        if not self.venda_atual:
-            messagebox.showwarning("Aviso", "Adicione produtos à venda!")
-            return
-        
-        # Calcular totais
-        total_venda = sum(item["total"] for item in self.venda_atual)
-        
-        # Obter comissão
-        comissao_pct = 0
-        rev_id = None
-        for rid, rev in self.revendedores.items():
-            if rev["nome"] == rev_nome:
-                comissao_pct = rev["comissao"]
-                rev_id = rid
+
+        escolhido = self.combo_cliente.get()
+        idx = 0
+        for i, c in enumerate(self._clientes_filtrados):
+            if escolhido.startswith(c["nome"]):
+                idx = i
                 break
-        
-        comissao_valor = (total_venda * comissao_pct) / 100
-        
-        # Registrar venda
-        nova_venda_id = max(self.vendas.keys()) + 1 if self.vendas else 1
-        self.vendas[nova_venda_id] = {
-            "revendedor_id": rev_id,
-            "revendedor_nome": rev_nome,
-            "data": datetime.now().strftime("%d/%m/%Y %H:%M"),
-            "produtos": self.venda_atual.copy(),
-            "total": total_venda,
-            "comissao_pct": comissao_pct,
-            "comissao_valor": comissao_valor
+
+        self.cliente_selecionado = self._clientes_filtrados[idx]
+        c = self.cliente_selecionado
+        self.lbl_cliente_sel.configure(text=f'Vinculado: {c["nome"]} ({c["telefone"]})')
+
+    def _remover_cliente(self):
+        self.cliente_selecionado = None
+        self.cliente_busca_var.set("")
+        self.combo_cliente.configure(values=["(nenhum)"])
+        self.combo_cliente.set("(nenhum)")
+        self.lbl_cliente_sel.configure(text="Nenhum cliente vinculado")
+
+    # ==========================================================
+    # Catálogo
+    # ==========================================================
+    def _render_catalogo(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+
+        filtro = self.busca_var.get().strip().lower()
+        tipo = self.combo_tipo.get()
+
+        grupos = {}
+        for p in self.produtos:
+            if tipo != "Todos" and p["tipo"] != tipo:
+                continue
+
+            texto = f'{p["nome"]} {p["sabor"]} {p["tipo"]}'.lower()
+            if filtro and filtro not in texto:
+                continue
+
+            grupos.setdefault(p["tipo"], {}).setdefault(p["sabor"], []).append(p)
+
+        for tipo_nome, sabores in grupos.items():
+            tipo_node = self.tree.insert("", "end", text=tipo_nome, open=True)
+            for sabor_nome, itens in sabores.items():
+                sabor_node = self.tree.insert(tipo_node, "end", text=sabor_nome, open=True)
+                for p in itens:
+                    preco = self._fmt_moeda(p["preco"])
+                    estoque = p["estoque"]
+                    tag = "sem_estoque" if estoque <= 0 else "ok"
+
+                    self.tree.insert(
+                        sabor_node,
+                        "end",
+                        text=p["nome"],
+                        values=(preco, estoque),
+                        tags=(tag, str(p["id"]))
+                    )
+
+        self.tree.tag_configure("sem_estoque", foreground="#888888")
+
+    def _adicionar_selecionado(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+
+        item_id = sel[0]
+        tags = self.tree.item(item_id, "tags")
+
+        pid = None
+        for t in tags:
+            if str(t).isdigit():
+                pid = int(t)
+                break
+
+        if pid is None:
+            return  # clicou em grupo
+
+        produto = next((p for p in self.produtos if p["id"] == pid), None)
+        if not produto or produto["estoque"] <= 0:
+            return
+
+        # quantidade fixa de 1, igual ao fluxo de balcão
+        produto["estoque"] -= 1
+
+        existente = next((c for c in self.carrinho if c["id"] == pid), None)
+        if existente:
+            existente["qtd"] += 1
+        else:
+            self.carrinho.append({
+                "id": pid,
+                "nome": f'{produto["nome"]} • {produto["sabor"]}',
+                "preco": produto["preco"],
+                "qtd": 1
+            })
+
+        self._render_catalogo()
+        self._render_carrinho()
+
+    # ==========================================================
+    # Carrinho
+    # ==========================================================
+    def _calcular_total(self):
+        subtotal = 0.0
+        for item in self.carrinho:
+            subtotal += item["preco"] * item["qtd"]
+
+        desconto = float(self._obter_desconto())
+        if desconto > subtotal:
+            desconto = subtotal
+
+        return subtotal - desconto
+
+    def _render_carrinho(self):
+        for w in self.lista_carrinho.winfo_children():
+            w.destroy()
+
+        total = 0.0
+        for item in self.carrinho:
+            total += item["preco"] * item["qtd"]
+
+            linha = ctk.CTkFrame(self.lista_carrinho, fg_color=theme.COR_FUNDO, corner_radius=10)
+            linha.pack(fill="x", pady=6)
+
+            ctk.CTkLabel(
+                linha,
+                text=item["nome"],
+                font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
+                text_color=theme.COR_TEXTO
+            ).pack(anchor="w", padx=10, pady=(8, 0))
+
+            ctk.CTkLabel(
+                linha,
+                text=f'{item["qtd"]} x {self._fmt_moeda(item["preco"])}',
+                font=ctk.CTkFont(family=theme.FONTE, size=12),
+                text_color=theme.COR_TEXTO_SEC
+            ).pack(anchor="w", padx=10, pady=(0, 8))
+
+        desconto = float(self._obter_desconto())
+        if desconto > total:
+            desconto = total
+
+        total_final = total - desconto
+        self.lbl_total.configure(text=f"Total: {self._fmt_moeda(total_final)}")
+
+    def _remover_ultimo_item(self):
+        if not self.carrinho:
+            return
+
+        ultimo = self.carrinho[-1]
+        pid = ultimo["id"]
+
+        produto = next((p for p in self.produtos if p["id"] == pid), None)
+        if produto:
+            produto["estoque"] += 1
+
+        ultimo["qtd"] -= 1
+        if ultimo["qtd"] <= 0:
+            self.carrinho.pop()
+
+        self._render_catalogo()
+        self._render_carrinho()
+
+    def _limpar_venda(self):
+        # devolve estoque
+        for item in self.carrinho:
+            produto = next((p for p in self.produtos if p["id"] == item["id"]), None)
+            if produto:
+                produto["estoque"] += item["qtd"]
+
+        self.carrinho = []
+
+        if hasattr(self, "entry_data"):
+            self.entry_data.delete(0, "end")
+            self.entry_data.insert(0, datetime.now().strftime("%d/%m/%Y %H:%M"))
+
+        if hasattr(self, "entry_desconto"):
+            self.entry_desconto.delete(0, "end")
+            self.entry_desconto.insert(0, "0,00")
+
+        if hasattr(self, "entry_obs"):
+            self.entry_obs.delete(0, "end")
+
+        if hasattr(self, "combo_pag"):
+            self.combo_pag.set("Pix")
+
+        if hasattr(self, "combo_revendedor") and self.revendedores:
+            self.combo_revendedor.set(next(iter(self.revendedores.values()))["nome"])
+
+        if self.vincular_cliente_var.get():
+            self._remover_cliente()
+
+        self._render_catalogo()
+        self._render_carrinho()
+
+    def _finalizar(self):
+        if not self.carrinho:
+            messagebox.showwarning("Aviso", "Adicione produtos à revenda.")
+            return
+
+        revendedor_nome = self.combo_revendedor.get().strip()
+        if not revendedor_nome:
+            messagebox.showwarning("Aviso", "Selecione um revendedor.")
+            return
+
+        data_txt = self.entry_data.get().strip()
+        try:
+            data_formatada = datetime.strptime(data_txt, "%d/%m/%Y %H:%M").strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            messagebox.showerror("Erro", "Data inválida. Use o formato: dd/mm/aaaa hh:mm")
+            return
+
+        cliente_id = self.cliente_selecionado["id"] if self.cliente_selecionado else None
+        forma_pag = self.combo_pag.get()
+        observacao = self.entry_obs.get().strip()
+        desconto = self._obter_desconto()
+
+        subtotal = Decimal(str(sum(item["preco"] * item["qtd"] for item in self.carrinho)))
+        if desconto > subtotal:
+            desconto = subtotal
+        total_final = subtotal - desconto
+
+        novo_id = max(self.vendas.keys(), default=0) + 1
+
+        self.vendas[novo_id] = {
+            "cliente_id": cliente_id,
+            "cliente_nome": self.cliente_selecionado["nome"] if self.cliente_selecionado else None,
+            "revendedor_nome": revendedor_nome,
+            "data": data_formatada,
+            "pagamento": forma_pag,
+            "observacao": observacao,
+            "produtos": [
+                {
+                    "produto": item["nome"],
+                    "preco": Decimal(str(item["preco"])),
+                    "qtd": item["qtd"],
+                    "total": Decimal(str(item["preco"] * item["qtd"])),
+                }
+                for item in self.carrinho
+            ],
+            "subtotal": subtotal,
+            "desconto": desconto,
+            "total": total_final,
         }
-        
+
+        self._recarregar_filtro_ano()
+        self._atualizar_tree_historico()
+
         messagebox.showinfo(
             "Sucesso",
-            f"Venda registrada!\n\nTotal: R$ {total_venda:.2f}\nComissão: R$ {comissao_valor:.2f}"
+            f"Revenda registrada!\n\n"
+            f"Revendedor: {revendedor_nome}\n"
+            f"Total: {self._fmt_moeda(total_final)}"
         )
-        
+
         self._limpar_venda()
-    
-    # ========================================
-    # SEÇÃO 4: ABA "HISTÓRICO"
-    # ========================================
-    
+
+    # ==========================================================
+    # ABA 2 - Histórico
+    # ==========================================================
     def _render_aba_historico(self, parent):
-        """
-        Aba que exibe o histórico de todas as vendas para revendedores.
-        Mostra data, revendedor, total e comissão.
-        """
-        parent.grid_rowconfigure(1, weight=1)
         parent.grid_columnconfigure(0, weight=1)
-        
-        # Filtro por revendedor
-        filter_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        filter_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
-        
-        ctk.CTkLabel(
-            filter_frame,
-            text="Filtrar por Revendedor:",
-            text_color=theme.COR_TEXTO
-        ).pack(side="left", padx=(0, 10))
-        
-        rev_names = ["Todos"] + [r["nome"] for r in self.revendedores.values()]
-        self.combo_filtro_rev = ctk.CTkComboBox(
-            filter_frame,
-            values=rev_names,
+        parent.grid_rowconfigure(1, weight=1)
+
+        self._configurar_treeview()
+
+        filtros = ctk.CTkFrame(parent, fg_color="transparent")
+        filtros.grid(row=0, column=0, padx=20, pady=(20, 12), sticky="ew")
+        filtros.grid_columnconfigure(5, weight=1)
+
+        ctk.CTkLabel(filtros, text="Mês", text_color=theme.COR_TEXTO).grid(
+            row=0, column=0, padx=(0, 8), sticky="w"
+        )
+
+        self.combo_filtro_mes = ctk.CTkComboBox(
+            filtros,
+            values=["Todos", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"],
+            width=110,
             state="readonly",
-            width=250,
+            command=lambda _: self._atualizar_tree_historico(),
+            fg_color=theme.COR_FUNDO,
+            button_color=theme.COR_HOVER,
+            button_hover_color=theme.COR_SELECIONADO,
+            border_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            dropdown_fg_color=theme.COR_FUNDO,
+            dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO,
+        )
+        self.combo_filtro_mes.grid(row=0, column=1, padx=(0, 16), sticky="w")
+        self.combo_filtro_mes.set("Todos")
+
+        ctk.CTkLabel(filtros, text="Ano", text_color=theme.COR_TEXTO).grid(
+            row=0, column=2, padx=(0, 8), sticky="w"
+        )
+
+        self.combo_filtro_ano = ctk.CTkComboBox(
+            filtros,
+            values=[],
+            width=120,
+            state="readonly",
+            command=lambda _: self._atualizar_tree_historico(),
+            fg_color=theme.COR_FUNDO,
+            button_color=theme.COR_HOVER,
+            button_hover_color=theme.COR_SELECIONADO,
+            border_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            dropdown_fg_color=theme.COR_FUNDO,
+            dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO,
+        )
+        self.combo_filtro_ano.grid(row=0, column=3, padx=(0, 16), sticky="w")
+
+        ctk.CTkButton(
+            filtros,
+            text="Aplicar filtros",
+            width=140,
+            height=36,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
             command=self._atualizar_tree_historico
-        )
-        self.combo_filtro_rev.set("Todos")
-        self.combo_filtro_rev.pack(side="left")
-        
-        # Tabela de histórico
-        table_frame = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL)
-        table_frame.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="nsew")
-        table_frame.grid_rowconfigure(0, weight=1)
-        table_frame.grid_columnconfigure(0, weight=1)
-        
-        style = ttk.Style()
-        style.configure("Treeview", font=(theme.FONTE, 10), rowheight=26)
-        
+        ).grid(row=0, column=4, sticky="w")
+
+        box = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL, corner_radius=14)
+        box.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="nsew")
+        box.grid_rowconfigure(1, weight=1)
+        box.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            box,
+            text="Histórico de Revendas",
+            font=ctk.CTkFont(family=theme.FONTE, size=16, weight="bold"),
+            text_color=theme.COR_TEXTO
+        ).grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
+
+        tabela_frame = ctk.CTkFrame(box, fg_color="transparent")
+        tabela_frame.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="nsew")
+        tabela_frame.grid_rowconfigure(0, weight=1)
+        tabela_frame.grid_columnconfigure(0, weight=1)
+
         self.tree_historico = ttk.Treeview(
-            table_frame,
-            columns=("data", "revendedor", "total", "comissao"),
-            show="tree headings",
-            height=15
+            tabela_frame,
+            style="Geladoce.Treeview",
+            columns=("data", "revendedor", "cliente", "itens", "pagamento", "total"),
+            show="tree headings"
         )
-        
+        self.tree_historico.grid(row=0, column=0, sticky="nsew")
+
         self.tree_historico.heading("#0", text="ID")
         self.tree_historico.heading("data", text="Data/Hora")
         self.tree_historico.heading("revendedor", text="Revendedor")
-        self.tree_historico.heading("total", text="Total Venda")
-        self.tree_historico.heading("comissao", text="Comissão")
-        
-        self.tree_historico.column("#0", width=50)
-        self.tree_historico.column("data", width=140)
-        self.tree_historico.column("revendedor", width=150)
-        self.tree_historico.column("total", width=120)
-        self.tree_historico.column("comissao", width=120)
-        
-        self.tree_historico.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        
-        scrollbar = ttk.Scrollbar(
-            table_frame,
-            orient="vertical",
-            command=self.tree_historico.yview
-        )
-        scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=10)
-        self.tree_historico.configure(yscroll=scrollbar.set)
-        
-        # Preencher tabela
+        self.tree_historico.heading("cliente", text="Cliente")
+        self.tree_historico.heading("itens", text="Itens")
+        self.tree_historico.heading("pagamento", text="Pagamento")
+        self.tree_historico.heading("total", text="Total")
+
+        self.tree_historico.column("#0", width=60, anchor="center")
+        self.tree_historico.column("data", width=140, anchor="center")
+        self.tree_historico.column("revendedor", width=170, anchor="w")
+        self.tree_historico.column("cliente", width=170, anchor="w")
+        self.tree_historico.column("itens", width=70, anchor="center")
+        self.tree_historico.column("pagamento", width=110, anchor="center")
+        self.tree_historico.column("total", width=110, anchor="center")
+
+        scroll_y = ttk.Scrollbar(tabela_frame, orient="vertical", command=self.tree_historico.yview)
+        scroll_y.grid(row=0, column=1, sticky="ns")
+        self.tree_historico.configure(yscrollcommand=scroll_y.set)
+
+        self._recarregar_filtro_ano()
         self._atualizar_tree_historico()
-    
-    def _atualizar_tree_historico(self, *args):
-        """
-        Atualiza a tabela de histórico com vendas filtradas.
-        Filtra por revendedor selecionado se não for "Todos".
-        """
+
+    def _recarregar_filtro_ano(self):
+        anos = {"Todos"}
+        for venda in self.vendas.values():
+            try:
+                dt = datetime.strptime(venda["data"], "%d/%m/%Y %H:%M")
+                anos.add(str(dt.year))
+            except ValueError:
+                continue
+
+        lista = ["Todos"] + sorted([a for a in anos if a != "Todos"])
+        self.combo_filtro_ano.configure(values=lista)
+        self.combo_filtro_ano.set("Todos")
+
+    def _atualizar_tree_historico(self):
+        if not hasattr(self, "tree_historico"):
+            return
+
         for item in self.tree_historico.get_children():
             self.tree_historico.delete(item)
-        
-        filtro = self.combo_filtro_rev.get()
-        
-        for venda_id, venda in self.vendas.items():
-            # Aplicar filtro
-            if filtro != "Todos" and venda["revendedor_nome"] != filtro:
+
+        filtro_mes = self.combo_filtro_mes.get()
+        filtro_ano = self.combo_filtro_ano.get()
+
+        for venda_id, venda in sorted(self.vendas.items(), reverse=True):
+            try:
+                dt = datetime.strptime(venda["data"], "%d/%m/%Y %H:%M")
+            except ValueError:
                 continue
-            
+
+            mes = dt.strftime("%m")
+            ano = str(dt.year)
+
+            if filtro_mes != "Todos" and mes != filtro_mes:
+                continue
+            if filtro_ano != "Todos" and ano != filtro_ano:
+                continue
+
+            qtd_itens = sum(item["qtd"] for item in venda["produtos"])
+            cliente = venda.get("cliente_nome") or "-"
+
             self.tree_historico.insert(
                 "",
                 "end",
@@ -822,233 +930,69 @@ class PaginaRevenda(ctk.CTkFrame):
                 values=(
                     venda["data"],
                     venda["revendedor_nome"],
-                    f"R$ {venda['total']:.2f}".replace(".", ","),
-                    f"R$ {venda['comissao_valor']:.2f}".replace(".", ",")
-                )
+                    cliente,
+                    qtd_itens,
+                    venda["pagamento"],
+                    self._fmt_moeda(venda["total"]),
+                ),
             )
-    
-    # ========================================
-    # SEÇÃO 5: ABA "RELATÓRIO"
-    # ========================================
-    
-    def _render_aba_relatorio(self, parent):
-        """
-        Aba de relatório que exibe estatísticas e totalizações de revenda.
-        Mostra faturamento total, comissões pagas e desempenho por revendedor.
-        """
-        parent.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(2, weight=1)
-        
-        # Título
-        ctk.CTkLabel(
-            parent,
-            text="Relatório de Revenda",
-            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=0, column=0, padx=20, pady=(20, 20), sticky="w")
-        
-        # Cards de resumo
-        cards_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        cards_frame.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="ew")
-        cards_frame.grid_columnconfigure((0, 1, 2), weight=1)
-        
-        # Calcular métricas
-        total_faturamento = sum(v["total"] for v in self.vendas.values())
-        total_comissoes = sum(v["comissao_valor"] for v in self.vendas.values())
-        num_vendas = len(self.vendas)
-        
-        # Card 1: Total Faturado
-        self._criar_card_relatorio(
-            cards_frame, 0,
-            "Total Faturado",
-            f"R$ {total_faturamento:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        )
-        
-        # Card 2: Total Comissões
-        self._criar_card_relatorio(
-            cards_frame, 1,
-            "Total de Comissões",
-            f"R$ {total_comissoes:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        )
-        
-        # Card 3: Número de Vendas
-        self._criar_card_relatorio(
-            cards_frame, 2,
-            "Vendas Registradas",
-            str(num_vendas)
-        )
-        
-        # Tabela de desempenho por revendedor
-        ctk.CTkLabel(
-            parent,
-            text="Desempenho por Revendedor",
-            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=2, column=0, padx=20, pady=(20, 10), sticky="w")
-        
-        table_frame = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL)
-        table_frame.grid(row=3, column=0, padx=20, pady=(0, 20), sticky="nsew")
-        table_frame.grid_rowconfigure(0, weight=1)
-        table_frame.grid_columnconfigure(0, weight=1)
-        
-        style = ttk.Style()
-        style.configure("Treeview", font=(theme.FONTE, 10), rowheight=26)
-        
-        tree = ttk.Treeview(
-            table_frame,
-            columns=("vendas", "total", "comissao"),
-            show="tree headings",
-            height=10
-        )
-        
-        tree.heading("#0", text="Revendedor")
-        tree.heading("vendas", text="# Vendas")
-        tree.heading("total", text="Total Faturado")
-        tree.heading("comissao", text="Total Comissão")
-        
-        tree.column("#0", width=200)
-        tree.column("vendas", width=100)
-        tree.column("total", width=150)
-        tree.column("comissao", width=150)
-        
-        # Agregar dados por revendedor
-        dados_rev = {}
-        for venda in self.vendas.values():
-            rev_nome = venda["revendedor_nome"]
-            if rev_nome not in dados_rev:
-                dados_rev[rev_nome] = {
-                    "vendas": 0,
-                    "total": 0,
-                    "comissao": 0
-                }
-            dados_rev[rev_nome]["vendas"] += 1
-            dados_rev[rev_nome]["total"] += venda["total"]
-            dados_rev[rev_nome]["comissao"] += venda["comissao_valor"]
-        
-        # Inserir dados
-        for rev_nome, dados in sorted(dados_rev.items()):
-            tree.insert(
-                "",
-                "end",
-                text=rev_nome,
-                values=(
-                    dados["vendas"],
-                    f"R$ {dados['total']:.2f}".replace(".", ","),
-                    f"R$ {dados['comissao']:.2f}".replace(".", ",")
-                )
-            )
-        
-        tree.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
-        scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=10)
-        tree.configure(yscroll=scrollbar.set)
-    
-    def _criar_card_relatorio(self, parent, column, titulo, valor):
-        """
-        Cria um card visual para exibir uma métrica.
-        Usado no relatório para mostrar totalizações.
-        
-        Args:
-            parent: Frame pai para o card
-            column: Coluna onde posicionar o card
-            titulo: Texto do título
-            valor: Valor principal a exibir
-        """
-        card = ctk.CTkFrame(parent, fg_color=theme.COR_PAINEL, corner_radius=10)
-        card.grid(row=0, column=column, padx=5, sticky="ew")
-        card.grid_columnconfigure(0, weight=1)
-        
-        ctk.CTkLabel(
-            card,
-            text=titulo,
-            font=ctk.CTkFont(family=theme.FONTE, size=10),
-            text_color=theme.COR_TEXTO_SEC
-        ).pack(pady=(12, 4), padx=10)
-        
-        ctk.CTkLabel(
-            card,
-            text=valor,
-            font=ctk.CTkFont(family=theme.FONTE, size=16, weight="bold"),
-            text_color=theme.COR_SUCESSO
-        ).pack(pady=(0, 12), padx=10)
-    
-    # ========================================
-    # SEÇÃO 6: DADOS MOCK
-    # ========================================
-    
+
+    # ==========================================================
+    # Dados mock
+    # ==========================================================
+    def _mock_produtos(self):
+        return [
+            {"id": 1, "tipo": "Sorvete", "sabor": "Chocolate", "nome": "Casquinha", "preco": 7.50, "estoque": 25},
+            {"id": 2, "tipo": "Sorvete", "sabor": "Chocolate", "nome": "Copo 300ml", "preco": 12.00, "estoque": 12},
+            {"id": 3, "tipo": "Sorvete", "sabor": "Morango", "nome": "Copo 300ml", "preco": 12.00, "estoque": 0},
+            {"id": 4, "tipo": "Picolé", "sabor": "Limão", "nome": "Picolé", "preco": 5.00, "estoque": 40},
+            {"id": 5, "tipo": "Açaí", "sabor": "Tradicional", "nome": "Açaí 500ml", "preco": 18.00, "estoque": 10},
+        ]
+
+    def _mock_clientes(self):
+        return [
+            {"id": 1, "nome": "João Silva", "cpf": "12345678901", "telefone": "(91) 99999-1111"},
+            {"id": 2, "nome": "Thaís Oliveira", "cpf": "98765432100", "telefone": "(91) 98888-2222"},
+            {"id": 3, "nome": "Maria Souza", "cpf": "90903737312", "telefone": "(91) 99779-1031"},
+        ]
+
     def _mock_revendedores(self):
-        """
-        Retorna dados de exemplo de revendedores para testes.
-        No banco de dados real, viria do banco.
-        """
         return {
-            1: {
-                "nome": "Sorveteria João",
-                "contato": "(91) 99999-1111",
-                "endereco": "Rua das Flores, 100 - Belém",
-                "comissao": 15.0,
-                "data_cadastro": "01/01/2024 10:00"
-            },
-            2: {
-                "nome": "Gelados & Cia",
-                "contato": "(91) 98888-2222",
-                "endereco": "Av. Brasil, 250 - Belém",
-                "comissao": 12.0,
-                "data_cadastro": "05/01/2024 14:30"
-            },
-            3: {
-                "nome": "Sorve-Tudo",
-                "contato": "(91) 97777-3333",
-                "endereco": "Praça da República, 50 - Belém",
-                "comissao": 18.0,
-                "data_cadastro": "10/01/2024 09:15"
-            }
+            1: {"nome": "Sorveteria João"},
+            2: {"nome": "Gelados & Cia"},
+            3: {"nome": "Sorve-Tudo"},
+            4: {"nome": "Mercadinho Central"},
         }
-    
+
     def _mock_vendas(self):
-        """
-        Retorna dados de exemplo de vendas para testes.
-        No banco real, viria do banco de dados.
-        """
         return {
             1: {
-                "revendedor_id": 1,
+                "cliente_id": 1,
+                "cliente_nome": "João Silva",
                 "revendedor_nome": "Sorveteria João",
                 "data": "22/02/2026 10:30",
+                "pagamento": "Pix",
+                "observacao": "",
                 "produtos": [
-                    {"produto": "Sorvete Morango", "preco": 12.00, "qtd": 5, "total": 60.00},
-                    {"produto": "Picolé Frutas", "preco": 5.00, "qtd": 10, "total": 50.00}
+                    {"produto": "Casquinha • Chocolate", "preco": Decimal("7.50"), "qtd": 5, "total": Decimal("37.50")},
+                    {"produto": "Picolé • Limão", "preco": Decimal("5.00"), "qtd": 10, "total": Decimal("50.00")},
                 ],
-                "total": 110.00,
-                "comissao_pct": 15.0,
-                "comissao_valor": 16.50
+                "subtotal": Decimal("87.50"),
+                "desconto": Decimal("0.00"),
+                "total": Decimal("87.50"),
             },
             2: {
-                "revendedor_id": 2,
+                "cliente_id": None,
+                "cliente_nome": None,
                 "revendedor_nome": "Gelados & Cia",
                 "data": "23/02/2026 14:15",
+                "pagamento": "Dinheiro",
+                "observacao": "Entrega no fim da tarde",
                 "produtos": [
-                    {"produto": "Açaí Premium", "preco": 25.00, "qtd": 3, "total": 75.00}
+                    {"produto": "Açaí 500ml • Tradicional", "preco": Decimal("18.00"), "qtd": 3, "total": Decimal("54.00")},
                 ],
-                "total": 75.00,
-                "comissao_pct": 12.0,
-                "comissao_valor": 9.00
-            }
-        }
-    
-    def _mock_produtos(self):
-        """
-        Retorna produtos disponíveis para venda.
-        Formato: {nome: preço}
-        """
-        return {
-            "Sorvete Morango": 12.00,
-            "Sorvete Chocolate": 12.00,
-            "Sorvete Baunilha": 11.00,
-            "Picolé Frutas": 5.00,
-            "Picolé Açaí": 6.00,
-            "Açaí Premium": 25.00,
-            "Açaí Tradicional": 20.00,
-            "Paleta Gelada": 3.50
+                "subtotal": Decimal("54.00"),
+                "desconto": Decimal("4.00"),
+                "total": Decimal("50.00"),
+            },
         }
