@@ -82,3 +82,5 @@ desktop.ini
 *.pdf
 *.png
 *.ico
+app/core/__pycache__/navigation.cpython-311.pyc
+app/core/__pycache__/navigation.cpython-311.pyc
