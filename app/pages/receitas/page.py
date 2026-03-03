@@ -29,7 +29,7 @@ class PaginaReceitas(ctk.CTkFrame):
         self.btn_buscar = ctk.CTkButton(
             self.frame_busca, text="Buscar", width=100,
             fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER,
-            command=self.acao_buscar
+            command=self.acao_buscar, text_color=theme.COR_TEXTO_ALT
         )
         self.btn_buscar.pack(side="left")
 
@@ -39,7 +39,7 @@ class PaginaReceitas(ctk.CTkFrame):
 
         btn_config = {
             "fg_color": theme.COR_BOTAO, "hover_color": theme.COR_HOVER,
-            "font": ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"), "height": 34
+            "font": ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"), "height": 34, "text_color": theme.COR_TEXTO_ALT
         }
         pad_botoes = (0, 10)
 
