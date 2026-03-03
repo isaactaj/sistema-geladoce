@@ -9,7 +9,7 @@ from app.config.theme import (
 
 
 class SecaoExpansivel(ctk.CTkFrame):
-    def __init__(self, master, titulo, ao_clicar, itens, ao_alternar=None):
+    def __init__(self, master, titulo, ao_clicar, itens, ao_alternar=None, icone=None):
         super().__init__(master, fg_color="transparent")
 
         self.ao_clicar = ao_clicar
@@ -23,6 +23,8 @@ class SecaoExpansivel(ctk.CTkFrame):
         self.botao_titulo = ctk.CTkButton(
             self,
             text=titulo,
+            image=icone,
+            compound="left",
             anchor="w",
             height=38,
             fg_color=COR_BOTAO,
@@ -86,6 +88,7 @@ class MenuLateral(ctk.CTkFrame):
         self.assets_dir = assets_dir
 
         self.botoes_simples = {}
+        self.icones = self._carregar_icones()
 
         # empurra conteúdo para cima (se precisar)
         self.grid_rowconfigure(99, weight=1)
@@ -97,8 +100,8 @@ class MenuLateral(ctk.CTkFrame):
         self._carregar_logo()
 
         # botões simples
-        self.criar_botao("Início", "inicio", 3)
-        self.criar_botao("Clientes", "clientes", 4)
+        self.criar_botao("Início", "inicio", 3, self.icones["inicio"])
+        self.criar_botao("Clientes", "clientes", 4, self.icones["clientes"])
 
         # seções expansíveis
         self.vendas = SecaoExpansivel(
@@ -112,6 +115,7 @@ class MenuLateral(ctk.CTkFrame):
                 ("Fechamento", "fechamento"),
             ],
             ao_alternar=self.fechar_outras_secoes,
+            icone=self.icones["vendas"]
         )
         self.vendas.grid(row=5, column=0, sticky="ew")
 
@@ -125,11 +129,12 @@ class MenuLateral(ctk.CTkFrame):
                 ("Estoque", "estoque"),
             ],
             ao_alternar=self.fechar_outras_secoes,
+            icone=self.icones["estoque_menu"]
         )
         self.estoque.grid(row=6, column=0, sticky="ew")
 
-        self.criar_botao("Fornecedores", "fornecedores", 7)
-        self.criar_botao("Fidelidade", "fidelidade", 8)
+        self.criar_botao("Fornecedores", "fornecedores", 7, self.icones["fornecedores"])
+        self.criar_botao("Fidelidade", "fidelidade", 8, self.icones["fidelidade"])
 
         self.adm = SecaoExpansivel(
             self,
@@ -140,11 +145,36 @@ class MenuLateral(ctk.CTkFrame):
                 ("Funcionários", "funcionarios"),
             ],
             ao_alternar=self.fechar_outras_secoes,
+            icone=self.icones["administracao"]
         )
         self.adm.grid(row=9, column=0, sticky="ew")
 
         # rodapé do usuário
         self._criar_rodape_usuario()
+    # ------------------------
+    # Icones do menu laterel
+    #------------------------
+    def _carregar_icones(self):
+        tamanho = (18, 18)
+
+        def carregar(nome_arquivo):
+            caminho = os.path.join(self.assets_dir, nome_arquivo)
+            if os.path.exists(caminho):
+                return ctk.CTkImage(
+                    light_image=Image.open(caminho),
+                    size=tamanho
+                )
+            return None
+        
+        return {
+            "inicio": carregar("icon_inicio.png"),
+            "clientes": carregar("icon_clientes.png"),
+            "vendas": carregar("icon_vendas.png"),
+            "estoque_menu": carregar("icon_estoque_menu.png"),
+            "fornecedores": carregar("icon_fornecedores.png"),
+            "fidelidade": carregar("icon_fidelidade.png"),
+            "administracao": carregar("icon_administracao.png")
+        }
 
     # -------------------------
     # Logo
@@ -154,7 +184,7 @@ class MenuLateral(ctk.CTkFrame):
         if os.path.exists(logo_path):
             self.logo_img = ctk.CTkImage(
                 light_image=Image.open(logo_path),
-                size=(160, 60),
+                size=(160, 80),
             )
             ctk.CTkLabel(self, image=self.logo_img, text="").grid(
                 row=1, column=0, padx=20, pady=(0, 15), sticky="w"
@@ -199,10 +229,12 @@ class MenuLateral(ctk.CTkFrame):
     # -------------------------
     # Botão simples
     # -------------------------
-    def criar_botao(self, texto, chave, linha):
+    def criar_botao(self, texto, chave, linha, icone=None):
         botao = ctk.CTkButton(
             self,
             text=texto,
+            image=icone,
+            compound="left",
             anchor="w",
             height=38,
             fg_color=COR_BOTAO,

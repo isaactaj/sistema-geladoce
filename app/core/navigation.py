@@ -9,7 +9,10 @@ from app.pages.estoque.produtos import PaginaProdutos
 from app.pages.estoque.receitas import PaginaReceitas
 from app.pages.estoque.page import PaginaEstoque
 from app.pages.inicio.page import PaginaInicio
+from app.pages.fidelidade.page import PaginaFidelidade
 from app.pages.fechamento.page import PaginaFechamento
+from app.pages.clientes.page import PaginaClientes
+from app.pages.fornecedores.page import PaginaFornecedores
 from app.pages.servicos.page import PaginaOperacaoCarrinhos
 
 class Navigation(ctk.CTkFrame):
@@ -35,7 +38,10 @@ class Navigation(ctk.CTkFrame):
             "receitas": PaginaReceitas,
             "estoque": PaginaEstoque,
             "inicio": PaginaInicio,
+            "fidelidade": PaginaFidelidade,
             "fechamento": PaginaFechamento,
+            "clientes": PaginaClientes,
+            "fornecedores": PaginaFornecedores,
             "servicos": PaginaOperacaoCarrinhos
 
         }
