@@ -13,6 +13,7 @@ COR_SELECIONADO = "#C1ECFD"  # botão ativo/selecionado
 
 COR_TEXTO = "#3A3A3A"        # texto principal
 COR_TEXTO_SEC = "#6A6A6A"    # texto secundário
+COR_TEXTO_ALT = "#111111"    # texto em botões claros
 
 # ---- Fonte padrão ----
 FONTE = "Segoe UI"

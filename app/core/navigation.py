@@ -5,11 +5,16 @@ from app.pages.placeholder import PlaceholderPage
 from app.pages.relatorios.page import PaginaAdminRelatorios
 from app.pages.funcionarios.page import PaginaFuncionarios
 from app.pages.balcao.page import PaginaVendasBalcao
-from app.pages.estoque.produtos import PaginaProdutos
-from app.pages.estoque.receitas import PaginaReceitas
+from app.pages.produtos.page import PaginaProdutos
+from app.pages.receitas.page import PaginaReceitas
 from app.pages.estoque.page import PaginaEstoque
 from app.pages.inicio.page import PaginaInicio
 from app.pages.revenda.page import PaginaRevenda
+from app.pages.fidelidade.page import PaginaFidelidade
+from app.pages.fechamento.page import PaginaFechamento
+from app.pages.clientes.page import PaginaClientes
+from app.pages.fornecedores.page import PaginaFornecedores
+from app.pages.servicos.page import PaginaOperacaoCarrinhos
 
 class Navigation(ctk.CTkFrame):
     """
@@ -33,7 +38,12 @@ class Navigation(ctk.CTkFrame):
             "produtos": PaginaProdutos,
             "receitas": PaginaReceitas,
             "estoque": PaginaEstoque,
-            "inicio": PaginaInicio, 
+            "inicio": PaginaInicio,
+            "fidelidade": PaginaFidelidade,
+            "fechamento": PaginaFechamento,
+            "clientes": PaginaClientes,
+            "fornecedores": PaginaFornecedores,
+            "servicos": PaginaOperacaoCarrinhos, 
             "revenda": PaginaRevenda,
         }
 
