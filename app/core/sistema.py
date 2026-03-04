@@ -1,9 +1,13 @@
 from datetime import datetime, date
 from decimal import Decimal
 
+from mysql.connector import Error
+
+from app.database.connection import conectar
 from app.database.repositories.clientes_repository import ClientesRepository
 from app.database.repositories.fornecedores_repository import FornecedoresRepository
 from app.database.repositories.funcionarios_repository import FuncionariosRepository
+from app.database.repositories.fidelidade_repository import FidelidadeRepository
 
 
 class SistemaService:
@@ -12,9 +16,10 @@ class SistemaService:
     Todas as páginas devem ler e gravar dados aqui.
 
     Neste momento:
-    - Clientes já estão ligados ao MySQL via ClientesRepository
-    - Fornecedores já estão ligados ao MySQL via FornecedoresRepository
-    - Funcionários já estão ligados ao MySQL via FuncionariosRepository
+    - Clientes       -> MySQL via ClientesRepository
+    - Fornecedores   -> MySQL via FornecedoresRepository
+    - Funcionários   -> MySQL via FuncionariosRepository
+    - Fidelidade     -> MySQL via FidelidadeRepository (mov_fidelidade + update saldo)
     - Demais módulos continuam em memória
     """
 
@@ -23,13 +28,14 @@ class SistemaService:
         self.clientes_repo = ClientesRepository()
         self.fornecedores_repo = FornecedoresRepository()
         self.funcionarios_repo = FuncionariosRepository()
+        self.fidelidade_repo = FidelidadeRepository()
 
         # Sequências locais (mantidas para módulos ainda em memória)
         self._seq = {
             "cliente": 1,       # mantido por compatibilidade
             "produto": 1,
             "venda": 1,
-            "mov_fidelidade": 1,
+            "mov_fidelidade": 1,  # mantido por compatibilidade
             "agendamento": 1,
             "delivery": 1,
             "fechamento": 1,
@@ -38,18 +44,16 @@ class SistemaService:
             "fornecedor": 1,    # mantido por compatibilidade
         }
 
-        # Cache transitório de campos extras de cliente que ainda não
-        # estão sendo persistidos por repository específico
+        # Cache transitório (evite guardar pontos aqui; agora é MySQL)
+        # Mantemos apenas fallback para valores que eventualmente não foram persistidos.
         self._clientes_estado = {}
 
         self._produtos = []
         self._estoque = {}           # produto_id -> quantidade
         self._vendas = []            # balcão, revenda, delivery
-        self._mov_fidelidade = []
         self._agendamentos = []
         self._deliveries = []
         self._fechamentos = []
-
         self._carrinhos = []
 
     # ======================================================
@@ -178,9 +182,8 @@ class SistemaService:
 
     def _merge_estado_cliente(self, cliente):
         """
-        Mescla os dados reais vindos do banco com o cache transitório
-        de fidelidade/última compra enquanto essa parte ainda não foi
-        totalmente migrada para persistência em banco.
+        Mescla os dados reais vindos do banco com um cache transitório.
+        IMPORTANTE: não sobrescrevemos pontos aqui (agora é MySQL).
         """
         if not cliente:
             return None
@@ -188,23 +191,52 @@ class SistemaService:
         base = dict(cliente)
         cid = base.get("id")
         if cid in self._clientes_estado:
-            base.update(self._clientes_estado[cid])
+            # Só mescla campos que NÃO sejam pontos (MySQL é a fonte da verdade)
+            estado = dict(self._clientes_estado[cid])
+            estado.pop("pontos_atuais", None)
+            estado.pop("total_acumulado", None)
+            base.update(estado)
 
         return base
 
     def _salvar_estado_cliente(self, cliente_id, **campos):
         """
-        Salva no cache transitório apenas os campos extras que ainda
-        não têm persistência própria no banco.
+        Cache transitório para compatibilidade.
+        Evite salvar pontos aqui; use o MySQL (FidelidadeRepository).
         """
         if not cliente_id:
             return
-
         estado = self._clientes_estado.setdefault(int(cliente_id), {})
         estado.update(campos)
 
+    def _atualizar_ultima_compra_db(self, cliente_id: int, data_ref: datetime) -> None:
+        """
+        Atualiza clientes.ultima_compra direto no MySQL.
+        (Evita depender de cache e garante que a Fidelidade enxergue no banco.)
+        """
+        conn = None
+        cur = None
+        try:
+            conn = conectar()
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE clientes SET ultima_compra = %s WHERE id = %s",
+                (data_ref, int(cliente_id)),
+            )
+            conn.commit()
+        except Exception:
+            # fallback: não quebra venda se falhar update
+            self._salvar_estado_cliente(cliente_id, ultima_compra=data_ref)
+        finally:
+            try:
+                if cur is not None:
+                    cur.close()
+            finally:
+                if conn is not None and conn.is_connected():
+                    conn.close()
+
     # ======================================================
-    # CLIENTES (AGORA VIA MYSQL REPOSITORY)
+    # CLIENTES (MYSQL)
     # ======================================================
     def salvar_cliente(self, nome, cpf_cnpj, telefone, email="", tipo_cliente="Varejo", cliente_id=None):
         cliente = self.clientes_repo.salvar_cliente(
@@ -237,7 +269,7 @@ class SistemaService:
         return self.clientes_repo.excluir_cliente(cliente_id)
 
     # ======================================================
-    # FORNECEDORES (AGORA VIA MYSQL REPOSITORY)
+    # FORNECEDORES (MYSQL)
     # ======================================================
     def salvar_fornecedor(self, razao, cnpj, telefone, observacoes="", fornecedor_id=None):
         return self.fornecedores_repo.salvar_fornecedor(
@@ -258,7 +290,7 @@ class SistemaService:
         return self.fornecedores_repo.excluir_fornecedor(fornecedor_id)
 
     # ======================================================
-    # PRODUTOS + ESTOQUE
+    # PRODUTOS + ESTOQUE (MEMÓRIA)
     # ======================================================
     def salvar_produto(
         self,
@@ -293,7 +325,7 @@ class SistemaService:
 
         novo = {
             "id": self._next_id("produto"),
-            "nome": name.strip(),
+            "nome": nome.strip(),  # <-- corrigido (antes estava name.strip())
             "categoria": categoria_norm,
             "preco": preco_dec,
             "ativo": True,
@@ -396,7 +428,7 @@ class SistemaService:
         return itens
 
     # ======================================================
-    # FUNCIONÁRIOS / ENTREGADORES (AGORA VIA MYSQL REPOSITORY)
+    # FUNCIONÁRIOS / ENTREGADORES (MYSQL)
     # ======================================================
     def salvar_funcionario(
         self,
@@ -433,7 +465,7 @@ class SistemaService:
         return self.funcionarios_repo.excluir_funcionario(funcionario_id)
 
     # ======================================================
-    # CARRINHOS
+    # CARRINHOS (MEMÓRIA)
     # ======================================================
     def salvar_carrinho(self, nome, capacidade, status="Disponível", id_externo="", carrinho_id=None):
         status_norm = self._normalizar_status_carrinho(status)
@@ -493,7 +525,7 @@ class SistemaService:
         self._carrinhos = [c for c in self._carrinhos if c["id"] != carrinho_id]
 
     # ======================================================
-    # AGENDAMENTOS
+    # AGENDAMENTOS (MEMÓRIA)
     # ======================================================
     def salvar_agendamento(
         self,
@@ -506,7 +538,6 @@ class SistemaService:
         status="Agendado",
         observacao="",
         agendamento_id=None,
-        # aliases opcionais para compatibilidade
         inicio=None,
         fim=None,
         motorista_id=None,
@@ -619,81 +650,38 @@ class SistemaService:
         self.excluir_agendamento(agendamento_id)
 
     # ======================================================
-    # FIDELIDADE - RN05
+    # FIDELIDADE (AGORA VIA MYSQL REPOSITORY)
     # ======================================================
     def calcular_pontos_rn05(self, tipo_cliente, valor_total):
-        valor = self._to_decimal(valor_total)
-        tipo = str(tipo_cliente).strip().lower()
-
-        if valor <= 0:
+        try:
+            return int(self.fidelidade_repo.calcular_pontos_rn05(tipo_cliente, valor_total))
+        except Exception:
+            # fallback simples (não quebra UI)
+            valor = self._to_decimal(valor_total)
+            tipo = str(tipo_cliente).strip().lower()
+            if valor <= 0:
+                return 0
+            if tipo == "varejo":
+                return int(valor // Decimal("5"))
+            if tipo == "revendedor":
+                return int(valor // Decimal("50")) * 2
             return 0
 
-        if tipo == "varejo":
-            return int(valor // Decimal("5"))
-
-        if tipo == "revendedor":
-            return int(valor // Decimal("50")) * 2
-
-        return 0
-
     def movimentar_fidelidade(self, cliente_id, acao, pontos, motivo="", venda_id=None):
-        cliente = self.obter_cliente(cliente_id)
-        if not cliente:
-            raise ValueError("Cliente não encontrado.")
-
-        pontos = int(pontos)
-        acao = acao.upper()
-
-        atual = int(cliente.get("pontos_atuais", 0))
-        total = int(cliente.get("total_acumulado", 0))
-
-        if acao == "ADICIONAR":
-            atual += pontos
-            total += pontos
-
-        elif acao == "REMOVER":
-            atual = max(0, atual - pontos)
-
-        elif acao == "RESGATAR":
-            if pontos > atual:
-                raise ValueError("Pontos insuficientes para resgate.")
-            atual -= pontos
-
-        elif acao == "BONUS":
-            atual += pontos
-            total += pontos
-
-        elif acao == "ZERAR":
-            atual = 0
-
-        else:
-            raise ValueError("Ação de fidelidade inválida.")
-
-        # Mantém os pontos disponíveis durante a sessão do app
-        # sem alterar indevidamente o status do cliente.
-        self._salvar_estado_cliente(
-            cliente_id,
-            pontos_atuais=atual,
-            total_acumulado=total,
+        # fonte da verdade: MySQL
+        return self.fidelidade_repo.movimentar_fidelidade(
+            cliente_id=int(cliente_id),
+            acao=str(acao),
+            pontos=int(pontos),
+            motivo=str(motivo),
+            venda_id=int(venda_id) if venda_id is not None else None,
         )
 
-        mov = {
-            "id": self._next_id("mov_fidelidade"),
-            "cliente_id": cliente_id,
-            "acao": acao,
-            "pontos": pontos,
-            "motivo": motivo.strip() or "Sem motivo",
-            "venda_id": venda_id,
-            "data": datetime.now(),
-        }
-        self._mov_fidelidade.append(mov)
-        return mov
-
     def obter_extrato_fidelidade(self, cliente_id):
-        return [m for m in self._mov_fidelidade if m["cliente_id"] == cliente_id]
+        return self.fidelidade_repo.obter_extrato_fidelidade(int(cliente_id))
 
     # ======================================================
-    # VENDAS
+    # VENDAS (MEMÓRIA)
     # ======================================================
     def registrar_venda(
         self,
@@ -707,14 +695,6 @@ class SistemaService:
         observacao="",
         data_venda=None,
     ):
-        """
-        itens esperado:
-        [
-            {"produto_id": 1, "qtd": 2},
-            {"produto_id": 4, "qtd": 1}
-        ]
-        """
-
         tipo = str(tipo).strip().upper()
         if tipo not in ("BALCAO", "REVENDA", "DELIVERY"):
             raise ValueError("Tipo de venda inválido.")
@@ -790,20 +770,16 @@ class SistemaService:
         self._vendas.append(venda)
 
         # 3) aplicar fidelidade automática
-        cliente_para_pontos = None
-        if tipo == "REVENDA":
-            cliente_para_pontos = revendedor_id
-        else:
-            cliente_para_pontos = cliente_id
+        cliente_para_pontos = revendedor_id if tipo == "REVENDA" else cliente_id
 
         if cliente_para_pontos:
             cliente = self.obter_cliente(cliente_para_pontos)
             if cliente:
-                # registra última compra no cache transitório
-                self._salvar_estado_cliente(cliente_para_pontos, ultima_compra=data_ref)
+                # registra última compra no banco
+                self._atualizar_ultima_compra_db(cliente_para_pontos, data_ref)
 
-                # Fidelidade usa o valor dos produtos (sem taxa de entrega)
-                pontos = self.calcular_pontos_rn05(cliente["tipo_cliente"], total_produtos)
+                # fidelidade usa o valor dos produtos (sem taxa)
+                pontos = self.calcular_pontos_rn05(cliente.get("tipo_cliente", "Varejo"), total_produtos)
                 if pontos > 0:
                     self.movimentar_fidelidade(
                         cliente_id=cliente_para_pontos,
@@ -835,7 +811,7 @@ class SistemaService:
         return resultado
 
     # ======================================================
-    # FECHAMENTO
+    # FECHAMENTO (MEMÓRIA)
     # ======================================================
     def salvar_fechamento(
         self,
@@ -851,13 +827,6 @@ class SistemaService:
         contado_caixa=0,
         observacao="",
     ):
-        """
-        Salva ou atualiza o fechamento do dia.
-
-        Regras atuais:
-        - Não utiliza suprimento
-        - Caixa previsto = caixa inicial + dinheiro - sangria
-        """
         data_ref = self._parse_date(data_fechamento)
         if not data_ref:
             raise ValueError("Data do fechamento inválida.")
@@ -941,9 +910,6 @@ class SistemaService:
         return resultado
 
     def listar_fechamento(self, data_inicial=None, data_final=None):
-        """
-        Alias para compatibilidade com páginas que chamem no singular.
-        """
         return self.listar_fechamentos(data_inicial=data_inicial, data_final=data_final)
 
     def obter_fechamento_por_data(self, data_ref):
@@ -988,7 +954,7 @@ class SistemaService:
         }
 
     # ======================================================
-    # RELATÓRIOS
+    # RELATÓRIOS (MEMÓRIA)
     # ======================================================
     def dados_relatorio(self, mes, ano, tipo="Todos", categoria="Todos"):
         mes = int(mes)
