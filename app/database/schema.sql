@@ -252,3 +252,23 @@ CREATE TABLE IF NOT EXISTS fechamentos (
 
     KEY idx_fechamentos_data (data)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS usuarios (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(150) NOT NULL,
+    login VARCHAR(60) NOT NULL,
+    cpf VARCHAR(11) NOT NULL,
+    senha_hash VARCHAR(255) NOT NULL,
+    tipo_acesso ENUM('Colaborador', 'Administrador') NOT NULL DEFAULT 'Colaborador',
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uk_usuarios_login (login),
+    UNIQUE KEY uk_usuarios_cpf (cpf),
+    KEY idx_usuarios_tipo_acesso (tipo_acesso),
+
+    CONSTRAINT fk_usuarios_funcionario_cpf
+        FOREIGN KEY (cpf) REFERENCES funcionarios(cpf)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
