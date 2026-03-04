@@ -1,22 +1,32 @@
 # main.py
-import customtkinter as ctk
 from pathlib import Path
+
+import customtkinter as ctk
 
 # Imports do projeto
 from app.config import theme
 from app.ui.sidebar import MenuLateral
 from app.core.navigation import Navigation
+from app.database.connection import (
+    criar_banco_se_nao_existir,
+    criar_tabelas_se_nao_existirem,
+    testar_conexao,
+)
 
 
 class SistemaGeladoce(ctk.CTk):
     def __init__(self):
         super().__init__()
 
+        # ===== Aparência
+        ctk.set_appearance_mode("light")
+
         # ===== Config básica da janela
         self.title("Geladoce - Sistema de Gestão")
         self.geometry("1100x680")
+        self.minsize(1100, 680)
+        self.configure(fg_color=theme.COR_FUNDO)
 
-        self.configure(fg_color=theme.COR_FUNDO)  # cor de fundo da janela principal
         # ===== Assets (ícone)
         raiz = Path(__file__).parent
         assets = raiz / "assets"
@@ -28,9 +38,6 @@ class SistemaGeladoce(ctk.CTk):
                 self.iconbitmap(str(icon_path))
             except Exception:
                 pass
-
-        # ===== Aparência
-        ctk.set_appearance_mode("light")
 
         # ===== Layout principal (sidebar + conteúdo)
         self.grid_rowconfigure(0, weight=1)
@@ -57,7 +64,37 @@ class SistemaGeladoce(ctk.CTk):
         self.menu.marcar_ativo(chave)
 
 
+def iniciar_banco() -> bool:
+    """
+    Inicializa o banco antes de abrir a interface.
+    1. Garante que o banco exista.
+    2. Garante que as tabelas existam.
+    3. Testa a conexão com o MySQL.
+    """
+    try:
+        criar_banco_se_nao_existir()
+        criar_tabelas_se_nao_existirem()  # <- aqui estava faltando chamar a função
+
+        if testar_conexao():
+            print("Conexão com MySQL funcionando com sucesso.")
+            print("Banco e tabelas prontos.")
+            return True
+
+        print("Falha ao conectar com MySQL.")
+        return False
+
+    except Exception as e:
+        print(f"Erro ao inicializar o banco: {e}")
+        return False
+
+
 def main():
+    banco_ok = iniciar_banco()
+
+    if not banco_ok:
+        print("O sistema não foi iniciado porque o banco não está pronto.")
+        return
+
     app = SistemaGeladoce()
     app.mainloop()
 

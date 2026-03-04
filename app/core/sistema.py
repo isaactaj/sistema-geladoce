@@ -1,30 +1,47 @@
 from datetime import datetime, date
 from decimal import Decimal
 
+from app.database.repositories.clientes_repository import ClientesRepository
+from app.database.repositories.fornecedores_repository import FornecedoresRepository
+from app.database.repositories.funcionarios_repository import FuncionariosRepository
+
 
 class SistemaService:
     """
     Núcleo central do sistema.
     Todas as páginas devem ler e gravar dados aqui.
-    Depois, este mesmo contrato pode ser ligado ao MySQL.
+
+    Neste momento:
+    - Clientes já estão ligados ao MySQL via ClientesRepository
+    - Fornecedores já estão ligados ao MySQL via FornecedoresRepository
+    - Funcionários já estão ligados ao MySQL via FuncionariosRepository
+    - Demais módulos continuam em memória
     """
 
     def __init__(self):
+        # Repositories reais (MySQL)
+        self.clientes_repo = ClientesRepository()
+        self.fornecedores_repo = FornecedoresRepository()
+        self.funcionarios_repo = FuncionariosRepository()
+
+        # Sequências locais (mantidas para módulos ainda em memória)
         self._seq = {
-            "cliente": 1,
+            "cliente": 1,       # mantido por compatibilidade
             "produto": 1,
             "venda": 1,
             "mov_fidelidade": 1,
             "agendamento": 1,
             "delivery": 1,
             "fechamento": 1,
-            "funcionario": 1,
+            "funcionario": 1,   # mantido por compatibilidade
             "carrinho": 1,
-            "fornecedor": 1,
+            "fornecedor": 1,    # mantido por compatibilidade
         }
 
-        self._clientes = []
-        self._fornecedores = []
+        # Cache transitório de campos extras de cliente que ainda não
+        # estão sendo persistidos por repository específico
+        self._clientes_estado = {}
+
         self._produtos = []
         self._estoque = {}           # produto_id -> quantidade
         self._vendas = []            # balcão, revenda, delivery
@@ -33,7 +50,6 @@ class SistemaService:
         self._deliveries = []
         self._fechamentos = []
 
-        self._funcionarios = []
         self._carrinhos = []
 
     # ======================================================
@@ -160,143 +176,86 @@ class SistemaService:
             return "Administrador"
         return "Colaborador"
 
+    def _merge_estado_cliente(self, cliente):
+        """
+        Mescla os dados reais vindos do banco com o cache transitório
+        de fidelidade/última compra enquanto essa parte ainda não foi
+        totalmente migrada para persistência em banco.
+        """
+        if not cliente:
+            return None
+
+        base = dict(cliente)
+        cid = base.get("id")
+        if cid in self._clientes_estado:
+            base.update(self._clientes_estado[cid])
+
+        return base
+
+    def _salvar_estado_cliente(self, cliente_id, **campos):
+        """
+        Salva no cache transitório apenas os campos extras que ainda
+        não têm persistência própria no banco.
+        """
+        if not cliente_id:
+            return
+
+        estado = self._clientes_estado.setdefault(int(cliente_id), {})
+        estado.update(campos)
+
     # ======================================================
-    # CLIENTES
+    # CLIENTES (AGORA VIA MYSQL REPOSITORY)
     # ======================================================
     def salvar_cliente(self, nome, cpf_cnpj, telefone, email="", tipo_cliente="Varejo", cliente_id=None):
-        tipo = "Revendedor" if str(tipo_cliente).strip().lower() == "revendedor" else "Varejo"
-
-        if cliente_id:
-            cliente = self.obter_cliente(cliente_id)
-            if not cliente:
-                raise ValueError("Cliente não encontrado.")
-
-            cliente["nome"] = nome.strip()
-            cliente["cpf_cnpj"] = cpf_cnpj.strip()
-            cliente["telefone"] = telefone.strip()
-            cliente["email"] = email.strip()
-            cliente["tipo_cliente"] = tipo
-            return cliente
-
-        novo = {
-            "id": self._next_id("cliente"),
-            "nome": nome.strip(),
-            "cpf_cnpj": cpf_cnpj.strip(),
-            "telefone": telefone.strip(),
-            "email": email.strip(),
-            "tipo_cliente": tipo,
-            "status": "Ativo",
-            "pontos_atuais": 0,
-            "total_acumulado": 0,
-            "ultima_compra": None,
-            "cadastro": datetime.now(),
-        }
-        self._clientes.append(novo)
-        return novo
+        cliente = self.clientes_repo.salvar_cliente(
+            nome=nome,
+            cpf_cnpj=cpf_cnpj,
+            telefone=telefone,
+            email=email,
+            tipo_cliente=tipo_cliente,
+            cliente_id=cliente_id,
+        )
+        return self._merge_estado_cliente(cliente)
 
     def listar_clientes(self, termo="", tipo_cliente=None):
-        termo = str(termo).strip().lower()
-        tipo_filtro = str(tipo_cliente).strip().lower() if tipo_cliente else None
-        resultado = []
-
-        for c in self._clientes:
-            if tipo_filtro and c["tipo_cliente"].lower() != tipo_filtro:
-                continue
-
-            texto = f'{c["nome"]} {c["cpf_cnpj"]} {c["telefone"]} {c["email"]}'.lower()
-            if termo and termo not in texto:
-                continue
-
-            resultado.append(c)
-
-        return resultado
+        clientes = self.clientes_repo.listar_clientes(
+            termo=termo,
+            tipo_cliente=tipo_cliente,
+        )
+        return [self._merge_estado_cliente(c) for c in clientes]
 
     def listar_revendedores(self):
-        return self.listar_clientes(tipo_cliente="Revendedor")
+        clientes = self.clientes_repo.listar_revendedores()
+        return [self._merge_estado_cliente(c) for c in clientes]
 
     def obter_cliente(self, cliente_id):
-        for c in self._clientes:
-            if c["id"] == cliente_id:
-                return c
-        return None
+        cliente = self.clientes_repo.obter_cliente(cliente_id)
+        return self._merge_estado_cliente(cliente)
 
     def excluir_cliente(self, cliente_id):
-        self._clientes = [c for c in self._clientes if c["id"] != cliente_id]
+        self._clientes_estado.pop(int(cliente_id), None)
+        return self.clientes_repo.excluir_cliente(cliente_id)
 
     # ======================================================
-    # FORNECEDORES
+    # FORNECEDORES (AGORA VIA MYSQL REPOSITORY)
     # ======================================================
     def salvar_fornecedor(self, razao, cnpj, telefone, observacoes="", fornecedor_id=None):
-        razao = str(razao).strip()
-        telefone = str(telefone).strip()
-        observacoes = str(observacoes).strip()
-        cnpj_digits = self._somente_digitos(cnpj)
-
-        if not razao:
-            raise ValueError("Razão Social é obrigatória.")
-
-        if len(cnpj_digits) != 14:
-            raise ValueError("CNPJ inválido: informe 14 dígitos.")
-
-        if not telefone:
-            raise ValueError("Telefone é obrigatório.")
-
-        # Impede CNPJ duplicado
-        for f in self._fornecedores:
-            if f["cnpj"] == cnpj_digits and f["id"] != fornecedor_id:
-                raise ValueError("Já existe um fornecedor com este CNPJ.")
-
-        if fornecedor_id:
-            fornecedor = self.obter_fornecedor(fornecedor_id)
-            if not fornecedor:
-                raise ValueError("Fornecedor não encontrado.")
-
-            fornecedor["razao"] = razao
-            fornecedor["cnpj"] = cnpj_digits
-            fornecedor["telefone"] = telefone
-            fornecedor["observacoes"] = observacoes
-            fornecedor["atualizado_em"] = datetime.now()
-            return fornecedor
-
-        novo = {
-            "id": self._next_id("fornecedor"),
-            "razao": razao,
-            "cnpj": cnpj_digits,
-            "telefone": telefone,
-            "observacoes": observacoes,
-            "cadastro": datetime.now(),
-            "atualizado_em": None,
-        }
-        self._fornecedores.append(novo)
-        return novo
+        return self.fornecedores_repo.salvar_fornecedor(
+            razao=razao,
+            cnpj=cnpj,
+            telefone=telefone,
+            observacoes=observacoes,
+            fornecedor_id=fornecedor_id,
+        )
 
     def listar_fornecedores(self, termo=""):
-        termo = str(termo).strip().lower()
-        resultado = []
-
-        for f in self._fornecedores:
-            texto = (
-                f'{f.get("razao", "")} '
-                f'{f.get("cnpj", "")} '
-                f'{f.get("telefone", "")} '
-                f'{f.get("observacoes", "")}'
-            ).lower()
-
-            if termo and termo not in texto:
-                continue
-
-            resultado.append(f)
-
-        return resultado
+        return self.fornecedores_repo.listar_fornecedores(termo=termo)
 
     def obter_fornecedor(self, fornecedor_id):
-        for f in self._fornecedores:
-            if f["id"] == fornecedor_id:
-                return f
-        return None
+        return self.fornecedores_repo.obter_fornecedor(fornecedor_id)
 
     def excluir_fornecedor(self, fornecedor_id):
-        self._fornecedores = [f for f in self._fornecedores if f["id"] != fornecedor_id]
+        return self.fornecedores_repo.excluir_fornecedor(fornecedor_id)
 
     # ======================================================
     # PRODUTOS + ESTOQUE
@@ -334,7 +293,7 @@ class SistemaService:
 
         novo = {
             "id": self._next_id("produto"),
-            "nome": nome.strip(),
+            "nome": name.strip(),
             "categoria": categoria_norm,
             "preco": preco_dec,
             "ativo": True,
@@ -437,7 +396,7 @@ class SistemaService:
         return itens
 
     # ======================================================
-    # FUNCIONÁRIOS / ENTREGADORES
+    # FUNCIONÁRIOS / ENTREGADORES (AGORA VIA MYSQL REPOSITORY)
     # ======================================================
     def salvar_funcionario(
         self,
@@ -448,135 +407,30 @@ class SistemaService:
         cpf="",
         tipo_acesso="Colaborador",
     ):
-        """
-        Compatível com versões antigas e novas.
-
-        Antigo:
-            salvar_funcionario(nome, telefone="", cargo="", funcionario_id=None)
-
-        Novo:
-            salvar_funcionario(
-                nome="...",
-                telefone="...",
-                cargo="...",
-                funcionario_id=...,
-                cpf="12345678901",
-                tipo_acesso="Administrador",
-            )
-        """
-        nome = str(nome).strip()
-        telefone = str(telefone).strip()
-        cargo_txt = str(cargo).strip()
-        cpf_digits = self._somente_digitos(cpf)
-        tipo_acesso_norm = self._normalizar_tipo_acesso(tipo_acesso)
-
-        if not nome:
-            raise ValueError("Nome é obrigatório.")
-
-        if cpf_digits and len(cpf_digits) != 11:
-            raise ValueError("CPF deve ter 11 números.")
-
-        # Impede CPF duplicado (apenas se CPF foi informado)
-        if cpf_digits:
-            for f in self._funcionarios:
-                if f.get("cpf", "") == cpf_digits and f["id"] != funcionario_id:
-                    raise ValueError("Já existe um funcionário com este CPF.")
-
-        if funcionario_id:
-            funcionario = self.obter_funcionario(funcionario_id)
-            if not funcionario:
-                raise ValueError("Funcionário não encontrado.")
-
-            funcionario["nome"] = nome
-            funcionario["telefone"] = telefone
-            funcionario["cargo"] = cargo_txt
-            funcionario["tipo_acesso"] = tipo_acesso_norm
-
-            # Só sobrescreve CPF se foi enviado; senão mantém o existente
-            if cpf_digits:
-                funcionario["cpf"] = cpf_digits
-            else:
-                funcionario["cpf"] = funcionario.get("cpf", "")
-
-            funcionario["atualizado_em"] = datetime.now()
-            return funcionario
-
-        novo = {
-            "id": self._next_id("funcionario"),
-            "nome": nome,
-            "cpf": cpf_digits,
-            "telefone": telefone,
-            "cargo": cargo_txt,
-            "tipo_acesso": tipo_acesso_norm,
-            "ativo": True,
-            "cadastro": datetime.now(),
-            "atualizado_em": None,
-        }
-        self._funcionarios.append(novo)
-        return novo
+        return self.funcionarios_repo.salvar_funcionario(
+            nome=nome,
+            telefone=telefone,
+            cargo=cargo,
+            funcionario_id=funcionario_id,
+            cpf=cpf,
+            tipo_acesso=tipo_acesso,
+        )
 
     def listar_funcionarios(self, termo="", cargo=None, tipo_acesso=None):
-        termo = str(termo).strip().lower()
-        termo_digits = self._somente_digitos(termo)
-
-        cargo_filtro = str(cargo).strip().lower() if cargo else None
-        tipo_acesso_filtro = self._normalizar_tipo_acesso(tipo_acesso) if tipo_acesso else None
-
-        resultado = []
-
-        for f in self._funcionarios:
-            if not f.get("ativo", True):
-                continue
-
-            if cargo_filtro and cargo_filtro not in f.get("cargo", "").lower():
-                continue
-
-            if tipo_acesso_filtro and f.get("tipo_acesso", "Colaborador") != tipo_acesso_filtro:
-                continue
-
-            texto = (
-                f'{f.get("nome", "")} '
-                f'{f.get("cpf", "")} '
-                f'{f.get("telefone", "")} '
-                f'{f.get("cargo", "")} '
-                f'{f.get("tipo_acesso", "Colaborador")}'
-            ).lower()
-
-            cpf_txt = self._somente_digitos(f.get("cpf", ""))
-            tel_txt = self._somente_digitos(f.get("telefone", ""))
-
-            if termo:
-                corresponde_texto = termo in texto
-                corresponde_digitos = bool(termo_digits) and (
-                    termo_digits in cpf_txt or termo_digits in tel_txt
-                )
-
-                if not (corresponde_texto or corresponde_digitos):
-                    continue
-
-            resultado.append(f)
-
-        return resultado
+        return self.funcionarios_repo.listar_funcionarios(
+            termo=termo,
+            cargo=cargo,
+            tipo_acesso=tipo_acesso,
+        )
 
     def listar_entregadores(self, termo=""):
-        todos = self.listar_funcionarios(termo=termo)
-
-        filtrados = [
-            f for f in todos
-            if any(chave in f.get("cargo", "").lower() for chave in ("entreg", "motoboy", "moto"))
-        ]
-
-        # se não houver cargo específico, retorna todos para não quebrar a UI
-        return filtrados if filtrados else todos
+        return self.funcionarios_repo.listar_entregadores(termo=termo)
 
     def obter_funcionario(self, funcionario_id):
-        for f in self._funcionarios:
-            if f["id"] == funcionario_id:
-                return f
-        return None
+        return self.funcionarios_repo.obter_funcionario(funcionario_id)
 
     def excluir_funcionario(self, funcionario_id):
-        self._funcionarios = [f for f in self._funcionarios if f["id"] != funcionario_id]
+        return self.funcionarios_repo.excluir_funcionario(funcionario_id)
 
     # ======================================================
     # CARRINHOS
@@ -790,8 +644,8 @@ class SistemaService:
         pontos = int(pontos)
         acao = acao.upper()
 
-        atual = int(cliente["pontos_atuais"])
-        total = int(cliente["total_acumulado"])
+        atual = int(cliente.get("pontos_atuais", 0))
+        total = int(cliente.get("total_acumulado", 0))
 
         if acao == "ADICIONAR":
             atual += pontos
@@ -815,9 +669,13 @@ class SistemaService:
         else:
             raise ValueError("Ação de fidelidade inválida.")
 
-        cliente["pontos_atuais"] = atual
-        cliente["total_acumulado"] = total
-        cliente["status"] = "Ativo" if atual > 0 else "Inativo"
+        # Mantém os pontos disponíveis durante a sessão do app
+        # sem alterar indevidamente o status do cliente.
+        self._salvar_estado_cliente(
+            cliente_id,
+            pontos_atuais=atual,
+            total_acumulado=total,
+        )
 
         mov = {
             "id": self._next_id("mov_fidelidade"),
@@ -941,6 +799,9 @@ class SistemaService:
         if cliente_para_pontos:
             cliente = self.obter_cliente(cliente_para_pontos)
             if cliente:
+                # registra última compra no cache transitório
+                self._salvar_estado_cliente(cliente_para_pontos, ultima_compra=data_ref)
+
                 # Fidelidade usa o valor dos produtos (sem taxa de entrega)
                 pontos = self.calcular_pontos_rn05(cliente["tipo_cliente"], total_produtos)
                 if pontos > 0:
@@ -951,7 +812,6 @@ class SistemaService:
                         motivo=f"Crédito automático RN05 - venda {tipo}",
                         venda_id=venda["id"],
                     )
-                    cliente["ultima_compra"] = data_ref
 
         return venda
 
