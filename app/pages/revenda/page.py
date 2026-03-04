@@ -22,8 +22,10 @@ from app.config import theme
 
 
 class PaginaRevenda(ctk.CTkFrame):
-    def __init__(self, master):
+    def __init__(self, master, sistema=None):
         super().__init__(master, fg_color=theme.COR_FUNDO)
+
+        self.sistema = sistema
 
         # Layout principal
         self.grid_columnconfigure(0, weight=1)
@@ -32,7 +34,7 @@ class PaginaRevenda(ctk.CTkFrame):
         # Estado geral
         self.busca_var = ctk.StringVar(value="")
         self.tipo_var = ctk.StringVar(value="Todos")
-        self.carrinho = []  # {id, nome, preco, qtd}
+        self.carrinho = []  # {id, nome, preco, qtd, categoria}
 
         # Cliente opcional
         self.vincular_cliente_var = ctk.BooleanVar(value=False)
@@ -40,11 +42,12 @@ class PaginaRevenda(ctk.CTkFrame):
         self.cliente_selecionado = None
         self._clientes_filtrados = []
 
-        # Dados mock
-        self.clientes = self._mock_clientes()
-        self.revendedores = self._mock_revendedores()
-        self.produtos = self._mock_produtos()
-        self.vendas = self._mock_vendas()
+        # Revendedores
+        self.revendedores_map = {}
+
+        # Histórico (fallback local caso o serviço ainda não tenha listagem)
+        self._historico_local = []
+        self._usar_historico_local = False
 
         # UI
         self._topo()
@@ -106,6 +109,236 @@ class PaginaRevenda(ctk.CTkFrame):
             foreground=[("selected", theme.COR_TEXTO)],
         )
 
+    def _listar_clientes(self, termo=""):
+        try:
+            return self.sistema.listar_clientes(termo=termo)
+        except TypeError:
+            try:
+                return self.sistema.listar_clientes(termo)
+            except TypeError:
+                return self.sistema.listar_clientes()
+
+    def _listar_clientes_para_vinculo(self, termo=""):
+        """
+        Cliente opcional da revenda.
+        Mantém apenas clientes que não sejam revendedores.
+        """
+        clientes = self._listar_clientes(termo)
+        resultado = []
+
+        for c in clientes:
+            tipo_cliente = str(c.get("tipo_cliente", "Varejo")).strip().lower()
+            if tipo_cliente == "revendedor":
+                continue
+            resultado.append(c)
+
+        return resultado
+
+    def _listar_revendedores(self):
+        """
+        Revendedor vem do cadastro de clientes.
+        Primeiro tenta método dedicado do sistema; se não existir,
+        filtra em listar_clientes().
+        """
+        try:
+            revendedores = self.sistema.listar_revendedores()
+            if isinstance(revendedores, list):
+                return revendedores
+        except Exception:
+            pass
+
+        revendedores = []
+        for c in self._listar_clientes(""):
+            tipo_cliente = str(c.get("tipo_cliente", "")).strip().lower()
+            if tipo_cliente == "revendedor":
+                revendedores.append(c)
+        return revendedores
+
+    def _carregar_revendedores_combo(self):
+        if not hasattr(self, "combo_revendedor"):
+            return
+
+        revendedores = self._listar_revendedores()
+        nomes = [r["nome"] for r in revendedores]
+
+        self.revendedores_map = {r["nome"]: r["id"] for r in revendedores}
+
+        if not nomes:
+            nomes = ["(nenhum)"]
+
+        self.combo_revendedor.configure(values=nomes)
+        self.combo_revendedor.set(nomes[0])
+
+    def _listar_catalogo(self, termo="", categoria="Todos"):
+        try:
+            return self.sistema.listar_catalogo(termo=termo, categoria=categoria)
+        except TypeError:
+            try:
+                if categoria != "Todos":
+                    return self.sistema.listar_catalogo(termo, categoria)
+                return self.sistema.listar_catalogo(termo)
+            except TypeError:
+                return self.sistema.listar_catalogo()
+
+    def _obter_produto_catalogo(self, produto_id):
+        produtos = self._listar_catalogo("", "Todos")
+        for p in produtos:
+            if p["id"] == produto_id:
+                return p
+        return None
+
+    def _qtd_no_carrinho(self, produto_id):
+        item = next((c for c in self.carrinho if c["id"] == produto_id), None)
+        return item["qtd"] if item else 0
+
+    def _estoque_disponivel(self, produto):
+        estoque_real = int(produto.get("estoque", 0))
+        reservado = self._qtd_no_carrinho(produto["id"])
+        return max(estoque_real - reservado, 0)
+
+    def _extrair_subgrupo(self, produto):
+        """
+        Mantém a organização visual do tree:
+        categoria -> subgrupo -> item
+        """
+        nome = str(produto.get("nome", "")).strip()
+
+        if "•" in nome:
+            partes = [p.strip() for p in nome.split("•") if p.strip()]
+            if len(partes) >= 2:
+                return partes[-1]
+
+        if "(" in nome and ")" in nome:
+            ini = nome.rfind("(")
+            fim = nome.rfind(")")
+            if ini != -1 and fim != -1 and fim > ini:
+                conteudo = nome[ini + 1:fim].strip()
+                if conteudo:
+                    return conteudo
+
+        return "Itens"
+
+    def _nome_cliente_por_id(self, cliente_id):
+        if not cliente_id:
+            return None
+
+        for c in self._listar_clientes(""):
+            if c.get("id") == cliente_id:
+                return c.get("nome")
+        return None
+
+    def _nome_revendedor_por_id(self, revendedor_id):
+        if not revendedor_id:
+            return None
+
+        for r in self._listar_revendedores():
+            if r.get("id") == revendedor_id:
+                return r.get("nome")
+        return None
+
+    def _listar_revendas(self):
+        """
+        Tenta buscar no sistema; se o sistema ainda não tiver um método de listagem,
+        usa o histórico local da sessão como fallback.
+        """
+        registros = None
+        consultou_servico = False
+
+        # 1) tentar listar_vendas(tipo="REVENDA")
+        try:
+            if hasattr(self.sistema, "listar_vendas"):
+                consultou_servico = True
+                registros = self.sistema.listar_vendas(tipo="REVENDA")
+        except TypeError:
+            try:
+                registros = self.sistema.listar_vendas()
+            except Exception:
+                registros = None
+        except Exception:
+            registros = None
+
+        # 2) fallback: tentar listar_revendas()
+        if registros is None:
+            try:
+                if hasattr(self.sistema, "listar_revendas"):
+                    consultou_servico = True
+                    registros = self.sistema.listar_revendas()
+            except Exception:
+                registros = None
+
+        if registros is None and not consultou_servico:
+            self._usar_historico_local = True
+            return list(self._historico_local)
+
+        self._usar_historico_local = False
+
+        if not isinstance(registros, list):
+            return []
+
+        normalizados = []
+        for reg in registros:
+            item = self._normalizar_registro_revenda(reg)
+            if item:
+                normalizados.append(item)
+
+        return normalizados
+
+    def _normalizar_registro_revenda(self, reg):
+        """
+        Converte o retorno do sistema para o formato que a tree do histórico espera.
+        """
+        if not isinstance(reg, dict):
+            return None
+
+        tipo = str(reg.get("tipo", reg.get("tipo_venda", "REVENDA"))).strip().upper()
+        if tipo and tipo != "REVENDA":
+            return None
+
+        venda_id = reg.get("id", reg.get("venda_id", reg.get("codigo", "")))
+
+        data_valor = reg.get("data_venda", reg.get("data", reg.get("data_hora", "")))
+        if isinstance(data_valor, datetime):
+            data_txt = data_valor.strftime("%d/%m/%Y %H:%M")
+        else:
+            data_txt = str(data_valor).strip()
+
+        revendedor_nome = reg.get("revendedor_nome") or reg.get("revendedor")
+        if not revendedor_nome:
+            revendedor_nome = self._nome_revendedor_por_id(reg.get("revendedor_id"))
+
+        cliente_nome = reg.get("cliente_nome") or reg.get("cliente")
+        if not cliente_nome:
+            cliente_nome = self._nome_cliente_por_id(reg.get("cliente_id"))
+
+        pagamento = reg.get("forma_pagamento", reg.get("pagamento", "-"))
+
+        itens = reg.get("itens", reg.get("produtos", []))
+        if not isinstance(itens, list):
+            itens = []
+
+        qtd_itens = reg.get("qtd_itens")
+        if qtd_itens is None:
+            qtd_itens = sum(int(item.get("qtd", 0)) for item in itens)
+
+        total = reg.get("total")
+        if total is None:
+            subtotal = reg.get("subtotal", 0)
+            desconto = reg.get("desconto", 0)
+            try:
+                total = Decimal(str(subtotal)) - Decimal(str(desconto))
+            except Exception:
+                total = 0
+
+        return {
+            "id": venda_id,
+            "data": data_txt,
+            "revendedor_nome": revendedor_nome or "-",
+            "cliente_nome": cliente_nome or None,
+            "pagamento": pagamento,
+            "qtd_itens": qtd_itens,
+            "total": total,
+        }
+
     # ==========================================================
     # Topo e abas
     # ==========================================================
@@ -116,7 +349,6 @@ class PaginaRevenda(ctk.CTkFrame):
             font=ctk.CTkFont(family=theme.FONTE, size=24, weight="bold"),
             text_color=theme.COR_TEXTO
         ).grid(row=0, column=0, padx=30, pady=(14, 4), sticky="w")
-
 
     def _render_abas(self):
         self.tabview = ctk.CTkTabview(
@@ -333,7 +565,7 @@ class PaginaRevenda(ctk.CTkFrame):
 
         self.combo_revendedor = ctk.CTkComboBox(
             self.dados_box,
-            values=[r["nome"] for r in self.revendedores.values()],
+            values=["(nenhum)"],
             state="readonly",
             fg_color=theme.COR_FUNDO,
             button_color=theme.COR_HOVER,
@@ -345,8 +577,7 @@ class PaginaRevenda(ctk.CTkFrame):
             dropdown_text_color=theme.COR_TEXTO,
         )
         self.combo_revendedor.grid(row=2, column=0, padx=12, pady=(0, 8), sticky="ew")
-        if self.revendedores:
-            self.combo_revendedor.set(next(iter(self.revendedores.values()))["nome"])
+        self._carregar_revendedores_combo()
 
         ctk.CTkLabel(
             self.dados_box, text="Data/Hora", text_color=theme.COR_TEXTO
@@ -489,10 +720,10 @@ class PaginaRevenda(ctk.CTkFrame):
         opcoes = []
         self._clientes_filtrados = []
 
-        for c in self.clientes:
-            texto = f'{c["nome"]} {c["cpf"]} {c["telefone"]}'.lower()
+        for c in self._listar_clientes_para_vinculo(termo):
+            texto = f'{c.get("nome", "")} {c.get("cpf_cnpj", "")} {c.get("telefone", "")}'.lower()
             if not termo or termo in texto:
-                opcoes.append(f'{c["nome"]} • {c["telefone"]}')
+                opcoes.append(f'{c.get("nome", "")} • {c.get("telefone", "")}')
                 self._clientes_filtrados.append(c)
 
         if not opcoes:
@@ -515,13 +746,13 @@ class PaginaRevenda(ctk.CTkFrame):
         escolhido = self.combo_cliente.get()
         idx = 0
         for i, c in enumerate(self._clientes_filtrados):
-            if escolhido.startswith(c["nome"]):
+            if escolhido.startswith(c.get("nome", "")):
                 idx = i
                 break
 
         self.cliente_selecionado = self._clientes_filtrados[idx]
         c = self.cliente_selecionado
-        self.lbl_cliente_sel.configure(text=f'Vinculado: {c["nome"]} ({c["telefone"]})')
+        self.lbl_cliente_sel.configure(text=f'Vinculado: {c.get("nome", "")} ({c.get("telefone", "")})')
 
     def _remover_cliente(self):
         self.cliente_selecionado = None
@@ -537,31 +768,36 @@ class PaginaRevenda(ctk.CTkFrame):
         for i in self.tree.get_children():
             self.tree.delete(i)
 
-        filtro = self.busca_var.get().strip().lower()
+        filtro = self.busca_var.get().strip()
         tipo = self.combo_tipo.get()
 
         grupos = {}
-        for p in self.produtos:
-            if tipo != "Todos" and p["tipo"] != tipo:
+        for p in self._listar_catalogo(filtro, tipo):
+            if p.get("ativo") is False:
                 continue
 
-            texto = f'{p["nome"]} {p["sabor"]} {p["tipo"]}'.lower()
-            if filtro and filtro not in texto:
-                continue
+            categoria = p.get("categoria", "Outros")
+            subgrupo = self._extrair_subgrupo(p)
+            grupos.setdefault(categoria, {}).setdefault(subgrupo, []).append(p)
 
-            grupos.setdefault(p["tipo"], {}).setdefault(p["sabor"], []).append(p)
-
-        for tipo_nome, sabores in grupos.items():
+        for tipo_nome, subgrupos in grupos.items():
             tipo_node = self.tree.insert("", "end", text=tipo_nome, open=True)
-            for sabor_nome, itens in sabores.items():
-                sabor_node = self.tree.insert(tipo_node, "end", text=sabor_nome, open=True)
+
+            for subgrupo_nome, itens in subgrupos.items():
+                sub_node = self.tree.insert(tipo_node, "end", text=subgrupo_nome, open=True)
+
                 for p in itens:
-                    preco = self._fmt_moeda(p["preco"])
-                    estoque = p["estoque"]
+                    preco_valor = p.get("preco", 0)
+                    try:
+                        preco = self._fmt_moeda(float(preco_valor))
+                    except Exception:
+                        preco = self._fmt_moeda(preco_valor)
+
+                    estoque = self._estoque_disponivel(p)
                     tag = "sem_estoque" if estoque <= 0 else "ok"
 
                     self.tree.insert(
-                        sabor_node,
+                        sub_node,
                         "end",
                         text=p["nome"],
                         values=(preco, estoque),
@@ -587,12 +823,14 @@ class PaginaRevenda(ctk.CTkFrame):
         if pid is None:
             return  # clicou em grupo
 
-        produto = next((p for p in self.produtos if p["id"] == pid), None)
-        if not produto or produto["estoque"] <= 0:
+        produto = self._obter_produto_catalogo(pid)
+        if not produto:
+            self._render_catalogo()
             return
 
-        # quantidade fixa de 1, igual ao fluxo de balcão
-        produto["estoque"] -= 1
+        if self._estoque_disponivel(produto) <= 0:
+            self._render_catalogo()
+            return
 
         existente = next((c for c in self.carrinho if c["id"] == pid), None)
         if existente:
@@ -600,9 +838,10 @@ class PaginaRevenda(ctk.CTkFrame):
         else:
             self.carrinho.append({
                 "id": pid,
-                "nome": f'{produto["nome"]} • {produto["sabor"]}',
-                "preco": produto["preco"],
-                "qtd": 1
+                "nome": produto["nome"],
+                "preco": float(produto["preco"]),
+                "qtd": 1,
+                "categoria": produto.get("categoria", "Outros"),
             })
 
         self._render_catalogo()
@@ -659,13 +898,8 @@ class PaginaRevenda(ctk.CTkFrame):
             return
 
         ultimo = self.carrinho[-1]
-        pid = ultimo["id"]
-
-        produto = next((p for p in self.produtos if p["id"] == pid), None)
-        if produto:
-            produto["estoque"] += 1
-
         ultimo["qtd"] -= 1
+
         if ultimo["qtd"] <= 0:
             self.carrinho.pop()
 
@@ -673,12 +907,6 @@ class PaginaRevenda(ctk.CTkFrame):
         self._render_carrinho()
 
     def _limpar_venda(self):
-        # devolve estoque
-        for item in self.carrinho:
-            produto = next((p for p in self.produtos if p["id"] == item["id"]), None)
-            if produto:
-                produto["estoque"] += item["qtd"]
-
         self.carrinho = []
 
         if hasattr(self, "entry_data"):
@@ -695,8 +923,8 @@ class PaginaRevenda(ctk.CTkFrame):
         if hasattr(self, "combo_pag"):
             self.combo_pag.set("Pix")
 
-        if hasattr(self, "combo_revendedor") and self.revendedores:
-            self.combo_revendedor.set(next(iter(self.revendedores.values()))["nome"])
+        if hasattr(self, "combo_revendedor"):
+            self._carregar_revendedores_combo()
 
         if self.vincular_cliente_var.get():
             self._remover_cliente()
@@ -710,8 +938,10 @@ class PaginaRevenda(ctk.CTkFrame):
             return
 
         revendedor_nome = self.combo_revendedor.get().strip()
-        if not revendedor_nome:
-            messagebox.showwarning("Aviso", "Selecione um revendedor.")
+        revendedor_id = self.revendedores_map.get(revendedor_nome)
+
+        if not revendedor_id:
+            messagebox.showwarning("Aviso", "Selecione um revendedor válido.")
             return
 
         data_txt = self.entry_data.get().strip()
@@ -721,50 +951,54 @@ class PaginaRevenda(ctk.CTkFrame):
             messagebox.showerror("Erro", "Data inválida. Use o formato: dd/mm/aaaa hh:mm")
             return
 
+        itens = [{"produto_id": item["id"], "qtd": item["qtd"]} for item in self.carrinho]
         cliente_id = self.cliente_selecionado["id"] if self.cliente_selecionado else None
-        forma_pag = self.combo_pag.get()
-        observacao = self.entry_obs.get().strip()
-        desconto = self._obter_desconto()
 
-        subtotal = Decimal(str(sum(item["preco"] * item["qtd"] for item in self.carrinho)))
-        if desconto > subtotal:
-            desconto = subtotal
-        total_final = subtotal - desconto
-
-        novo_id = max(self.vendas.keys(), default=0) + 1
-
-        self.vendas[novo_id] = {
-            "cliente_id": cliente_id,
-            "cliente_nome": self.cliente_selecionado["nome"] if self.cliente_selecionado else None,
-            "revendedor_nome": revendedor_nome,
-            "data": data_formatada,
-            "pagamento": forma_pag,
-            "observacao": observacao,
-            "produtos": [
-                {
-                    "produto": item["nome"],
-                    "preco": Decimal(str(item["preco"])),
-                    "qtd": item["qtd"],
-                    "total": Decimal(str(item["preco"] * item["qtd"])),
-                }
-                for item in self.carrinho
-            ],
-            "subtotal": subtotal,
-            "desconto": desconto,
-            "total": total_final,
+        kwargs = {
+            "tipo": "REVENDA",
+            "revendedor_id": revendedor_id,
+            "itens": itens,
+            "forma_pagamento": self.combo_pag.get(),
+            "desconto": self._obter_desconto(),
+            "observacao": self.entry_obs.get().strip(),
+            "data_venda": data_formatada,
         }
+        if cliente_id:
+            kwargs["cliente_id"] = cliente_id
 
-        self._recarregar_filtro_ano()
-        self._atualizar_tree_historico()
+        try:
+            try:
+                self.sistema.registrar_venda(**kwargs)
+            except TypeError:
+                # fallback caso o serviço ainda não aceite cliente_id
+                kwargs.pop("cliente_id", None)
+                self.sistema.registrar_venda(**kwargs)
+        except Exception as e:
+            messagebox.showerror("Erro", f"Não foi possível registrar a revenda.\n\nDetalhes: {e}")
+            self._render_catalogo()
+            return
 
-        messagebox.showinfo(
-            "Sucesso",
-            f"Revenda registrada!\n\n"
-            f"Revendedor: {revendedor_nome}\n"
-            f"Total: {self._fmt_moeda(total_final)}"
-        )
+        # Se o sistema ainda não tiver listagem de histórico, mantém a aba funcional nesta sessão
+        if self._usar_historico_local:
+            subtotal = Decimal(str(sum(item["preco"] * item["qtd"] for item in self.carrinho)))
+            desconto = self._obter_desconto()
+            if desconto > subtotal:
+                desconto = subtotal
+            total_final = subtotal - desconto
+
+            self._historico_local.append({
+                "id": len(self._historico_local) + 1,
+                "data": data_formatada,
+                "revendedor_nome": revendedor_nome,
+                "cliente_nome": self.cliente_selecionado["nome"] if self.cliente_selecionado else None,
+                "pagamento": self.combo_pag.get(),
+                "qtd_itens": sum(item["qtd"] for item in self.carrinho),
+                "total": total_final,
+            })
 
         self._limpar_venda()
+        self._atualizar_tree_historico()
+        messagebox.showinfo("Sucesso", "Revenda registrada com sucesso.")
 
     # ==========================================================
     # ABA 2 - Histórico
@@ -885,7 +1119,7 @@ class PaginaRevenda(ctk.CTkFrame):
 
     def _recarregar_filtro_ano(self):
         anos = {"Todos"}
-        for venda in self.vendas.values():
+        for venda in self._listar_revendas():
             try:
                 dt = datetime.strptime(venda["data"], "%d/%m/%Y %H:%M")
                 anos.add(str(dt.year))
@@ -906,7 +1140,7 @@ class PaginaRevenda(ctk.CTkFrame):
         filtro_mes = self.combo_filtro_mes.get()
         filtro_ano = self.combo_filtro_ano.get()
 
-        for venda_id, venda in sorted(self.vendas.items(), reverse=True):
+        for venda in sorted(self._listar_revendas(), key=lambda x: str(x.get("data", "")), reverse=True):
             try:
                 dt = datetime.strptime(venda["data"], "%d/%m/%Y %H:%M")
             except ValueError:
@@ -920,79 +1154,18 @@ class PaginaRevenda(ctk.CTkFrame):
             if filtro_ano != "Todos" and ano != filtro_ano:
                 continue
 
-            qtd_itens = sum(item["qtd"] for item in venda["produtos"])
             cliente = venda.get("cliente_nome") or "-"
 
             self.tree_historico.insert(
                 "",
                 "end",
-                text=str(venda_id),
+                text=str(venda.get("id", "")),
                 values=(
-                    venda["data"],
-                    venda["revendedor_nome"],
+                    venda.get("data", ""),
+                    venda.get("revendedor_nome", "-"),
                     cliente,
-                    qtd_itens,
-                    venda["pagamento"],
-                    self._fmt_moeda(venda["total"]),
+                    venda.get("qtd_itens", 0),
+                    venda.get("pagamento", "-"),
+                    self._fmt_moeda(venda.get("total", 0)),
                 ),
             )
-
-    # ==========================================================
-    # Dados mock
-    # ==========================================================
-    def _mock_produtos(self):
-        return [
-            {"id": 1, "tipo": "Sorvete", "sabor": "Chocolate", "nome": "Casquinha", "preco": 7.50, "estoque": 25},
-            {"id": 2, "tipo": "Sorvete", "sabor": "Chocolate", "nome": "Copo 300ml", "preco": 12.00, "estoque": 12},
-            {"id": 3, "tipo": "Sorvete", "sabor": "Morango", "nome": "Copo 300ml", "preco": 12.00, "estoque": 0},
-            {"id": 4, "tipo": "Picolé", "sabor": "Limão", "nome": "Picolé", "preco": 5.00, "estoque": 40},
-            {"id": 5, "tipo": "Açaí", "sabor": "Tradicional", "nome": "Açaí 500ml", "preco": 18.00, "estoque": 10},
-        ]
-
-    def _mock_clientes(self):
-        return [
-            {"id": 1, "nome": "João Silva", "cpf": "12345678901", "telefone": "(91) 99999-1111"},
-            {"id": 2, "nome": "Thaís Oliveira", "cpf": "98765432100", "telefone": "(91) 98888-2222"},
-            {"id": 3, "nome": "Maria Souza", "cpf": "90903737312", "telefone": "(91) 99779-1031"},
-        ]
-
-    def _mock_revendedores(self):
-        return {
-            1: {"nome": "Sorveteria João"},
-            2: {"nome": "Gelados & Cia"},
-            3: {"nome": "Sorve-Tudo"},
-            4: {"nome": "Mercadinho Central"},
-        }
-
-    def _mock_vendas(self):
-        return {
-            1: {
-                "cliente_id": 1,
-                "cliente_nome": "João Silva",
-                "revendedor_nome": "Sorveteria João",
-                "data": "22/02/2026 10:30",
-                "pagamento": "Pix",
-                "observacao": "",
-                "produtos": [
-                    {"produto": "Casquinha • Chocolate", "preco": Decimal("7.50"), "qtd": 5, "total": Decimal("37.50")},
-                    {"produto": "Picolé • Limão", "preco": Decimal("5.00"), "qtd": 10, "total": Decimal("50.00")},
-                ],
-                "subtotal": Decimal("87.50"),
-                "desconto": Decimal("0.00"),
-                "total": Decimal("87.50"),
-            },
-            2: {
-                "cliente_id": None,
-                "cliente_nome": None,
-                "revendedor_nome": "Gelados & Cia",
-                "data": "23/02/2026 14:15",
-                "pagamento": "Dinheiro",
-                "observacao": "Entrega no fim da tarde",
-                "produtos": [
-                    {"produto": "Açaí 500ml • Tradicional", "preco": Decimal("18.00"), "qtd": 3, "total": Decimal("54.00")},
-                ],
-                "subtotal": Decimal("54.00"),
-                "desconto": Decimal("4.00"),
-                "total": Decimal("50.00"),
-            },
-        }

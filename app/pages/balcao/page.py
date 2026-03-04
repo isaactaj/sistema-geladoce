@@ -1,11 +1,14 @@
 import customtkinter as ctk
 from tkinter import ttk
+from CTkMessagebox import CTkMessagebox
 from app.config import theme
 
 
 class PaginaVendasBalcao(ctk.CTkFrame):
-    def __init__(self, master):
+    def __init__(self, master, sistema=None):
         super().__init__(master, fg_color=theme.COR_FUNDO)
+
+        self.sistema = sistema
 
         # Layout geral (catálogo + carrinho)
         self.grid_columnconfigure(0, weight=3)  # catálogo
@@ -19,17 +22,13 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         # Estado (catálogo + carrinho)
         self.busca_var = ctk.StringVar(value="")
         self.tipo_var = ctk.StringVar(value="Todos")
-        self.carrinho = []  # lista de dicts: {id, nome, preco, qtd}
+        self.carrinho = []  # lista de dicts: {id, nome, preco, qtd, categoria}
 
         # Estado (cliente opcional)
         self.vincular_cliente_var = ctk.BooleanVar(value=False)
         self.cliente_busca_var = ctk.StringVar(value="")
         self.cliente_selecionado = None
         self._clientes_filtrados = []
-
-        # Mock (depois você troca por banco)
-        self.clientes = self._mock_clientes()
-        self.produtos = self._mock_produtos()
 
         # UI
         self._topo()
@@ -39,6 +38,67 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         self._render_catalogo()
         self._toggle_cliente()  # deixa o bloco de cliente desabilitado por padrão
+
+    # =========================================================
+    # HELPERS
+    # =========================================================
+    def _listar_clientes(self, termo=""):
+        try:
+            return self.sistema.listar_clientes(termo=termo)
+        except TypeError:
+            try:
+                return self.sistema.listar_clientes(termo)
+            except TypeError:
+                return self.sistema.listar_clientes()
+
+    def _listar_produtos_catalogo(self, termo="", categoria="Todos"):
+        try:
+            return self.sistema.listar_catalogo(termo=termo, categoria=categoria)
+        except TypeError:
+            try:
+                if categoria != "Todos":
+                    return self.sistema.listar_catalogo(termo, categoria)
+                return self.sistema.listar_catalogo(termo)
+            except TypeError:
+                return self.sistema.listar_catalogo()
+
+    def _obter_produto_catalogo(self, produto_id):
+        produtos = self._listar_produtos_catalogo("", "Todos")
+        for p in produtos:
+            if p["id"] == produto_id:
+                return p
+        return None
+
+    def _qtd_no_carrinho(self, produto_id):
+        item = next((c for c in self.carrinho if c["id"] == produto_id), None)
+        return item["qtd"] if item else 0
+
+    def _estoque_disponivel(self, produto):
+        estoque_real = int(produto.get("estoque", 0))
+        reservado = self._qtd_no_carrinho(produto["id"])
+        return max(estoque_real - reservado, 0)
+
+    def _extrair_subgrupo(self, produto):
+        """
+        Mantém a ideia visual de hierarquia (tipo -> subgrupo -> produto),
+        mesmo com catálogo central sem campo 'sabor'.
+        """
+        nome = str(produto.get("nome", "")).strip()
+
+        if "•" in nome:
+            partes = [p.strip() for p in nome.split("•") if p.strip()]
+            if len(partes) >= 2:
+                return partes[-1]
+
+        if "(" in nome and ")" in nome:
+            ini = nome.rfind("(")
+            fim = nome.rfind(")")
+            if ini != -1 and fim != -1 and fim > ini:
+                conteudo = nome[ini + 1:fim].strip()
+                if conteudo:
+                    return conteudo
+
+        return "Itens"
 
     # ---------------- UI ----------------
     def _topo(self):
@@ -91,7 +151,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         style.configure("Treeview.Heading", font=(theme.FONTE, 12, "bold"))
         style.map("Treeview", background=[("selected", theme.COR_HOVER)])
 
-        # Treeview com hierarquia (tipo -> sabor -> produto)
+        # Treeview com hierarquia (tipo -> subgrupo -> produto)
         self.tree = ttk.Treeview(
             box,
             columns=("preco", "estoque"),
@@ -230,23 +290,6 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         self._render_carrinho()
 
-    # ---------------- Dados mock ----------------
-    def _mock_produtos(self):
-        return [
-            {"id": 1, "tipo": "Sorvete", "sabor": "Chocolate", "nome": "Casquinha", "preco": 7.50, "estoque": 25},
-            {"id": 2, "tipo": "Sorvete", "sabor": "Chocolate", "nome": "Copo 300ml", "preco": 12.00, "estoque": 12},
-            {"id": 3, "tipo": "Sorvete", "sabor": "Morango", "nome": "Copo 300ml", "preco": 12.00, "estoque": 0},
-            {"id": 4, "tipo": "Picolé", "sabor": "Limão", "nome": "Picolé", "preco": 5.00, "estoque": 40},
-            {"id": 5, "tipo": "Açaí", "sabor": "Tradicional", "nome": "Açaí 500ml", "preco": 18.00, "estoque": 10},
-        ]
-
-    def _mock_clientes(self):
-        return [
-            {"id": 1, "nome": "João Silva", "cpf": "12345678901", "telefone": "(91) 99999-1111"},
-            {"id": 2, "nome": "Thaís Oliveira", "cpf": "98765432100", "telefone": "(91) 98888-2222"},
-            {"id": 3, "nome": "Maria Souza", "cpf": "90903737312", "telefone": "(91) 99779-1031"},
-        ]
-
     # ---------------- Cliente (opcional) ----------------
     def _toggle_cliente(self):
         ligado = self.vincular_cliente_var.get()
@@ -267,10 +310,10 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         opcoes = []
         self._clientes_filtrados = []
 
-        for c in self.clientes:
-            texto = f'{c["nome"]} {c["cpf"]} {c["telefone"]}'.lower()
+        for c in self._listar_clientes(termo):
+            texto = f'{c.get("nome", "")} {c.get("cpf_cnpj", "")} {c.get("telefone", "")}'.lower()
             if not termo or termo in texto:
-                opcoes.append(f'{c["nome"]} • {c["telefone"]}')
+                opcoes.append(f'{c.get("nome", "")} • {c.get("telefone", "")}')
                 self._clientes_filtrados.append(c)
 
         if not opcoes:
@@ -292,14 +335,16 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         escolhido = self.combo_cliente.get()
         idx = 0
+
         for i, c in enumerate(self._clientes_filtrados):
-            if escolhido.startswith(c["nome"]):
+            nome = c.get("nome", "")
+            if escolhido.startswith(nome):
                 idx = i
                 break
 
         self.cliente_selecionado = self._clientes_filtrados[idx]
         c = self.cliente_selecionado
-        self.lbl_cliente_sel.configure(text=f'Vinculado: {c["nome"]} ({c["telefone"]})')
+        self.lbl_cliente_sel.configure(text=f'Vinculado: {c.get("nome", "")} ({c.get("telefone", "")})')
 
     def _remover_cliente(self):
         self.cliente_selecionado = None
@@ -313,30 +358,31 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         for i in self.tree.get_children():
             self.tree.delete(i)
 
-        filtro = self.busca_var.get().strip().lower()
+        filtro = self.busca_var.get().strip()
         tipo = self.combo_tipo.get()
 
-        # agrupa tipo -> sabor
-        grupos = {}
-        for p in self.produtos:
-            if tipo != "Todos" and p["tipo"] != tipo:
-                continue
-            texto = f'{p["nome"]} {p["sabor"]} {p["tipo"]}'.lower()
-            if filtro and filtro not in texto:
-                continue
-            grupos.setdefault(p["tipo"], {}).setdefault(p["sabor"], []).append(p)
+        produtos = self._listar_produtos_catalogo(filtro, tipo)
 
-        for tipo_nome, sabores in grupos.items():
+        # agrupa categoria -> subgrupo
+        grupos = {}
+        for p in produtos:
+            categoria = p.get("categoria", "Outros")
+            subgrupo = self._extrair_subgrupo(p)
+            grupos.setdefault(categoria, {}).setdefault(subgrupo, []).append(p)
+
+        for tipo_nome, subgrupos in grupos.items():
             tipo_node = self.tree.insert("", "end", text=tipo_nome, open=True)
-            for sabor_nome, itens in sabores.items():
-                sabor_node = self.tree.insert(tipo_node, "end", text=sabor_nome, open=True)
+
+            for subgrupo_nome, itens in subgrupos.items():
+                sub_node = self.tree.insert(tipo_node, "end", text=subgrupo_nome, open=True)
+
                 for p in itens:
-                    preco = theme.fmt_dinheiro(p["preco"])
-                    estoque = p["estoque"]
+                    preco = theme.fmt_dinheiro(float(p["preco"])) if not isinstance(p["preco"], str) else p["preco"]
+                    estoque = self._estoque_disponivel(p)
                     tag = "sem_estoque" if estoque <= 0 else "ok"
 
-                    node = self.tree.insert(
-                        sabor_node,
+                    self.tree.insert(
+                        sub_node,
                         "end",
                         text=p["nome"],
                         values=(preco, estoque),
@@ -362,22 +408,31 @@ class PaginaVendasBalcao(ctk.CTkFrame):
                 break
 
         if pid is None:
-            return  # clicou em tipo/sabor
+            return  # clicou em grupo/subgrupo
 
-        produto = next((p for p in self.produtos if p["id"] == pid), None)
-        if not produto or produto["estoque"] <= 0:
+        produto = self._obter_produto_catalogo(pid)
+        if not produto:
+            self._render_catalogo()
             return
 
-        # decrementa estoque (simulação)
-        produto["estoque"] -= 1
+        estoque_disponivel = self._estoque_disponivel(produto)
+        if estoque_disponivel <= 0:
+            self._render_catalogo()
+            return
 
-        # adiciona/incrementa no carrinho
+        # adiciona/incrementa no carrinho (sem baixar estoque ainda)
         existente = next((c for c in self.carrinho if c["id"] == pid), None)
         if existente:
             existente["qtd"] += 1
         else:
             self.carrinho.append(
-                {"id": pid, "nome": produto["nome"], "preco": produto["preco"], "qtd": 1}
+                {
+                    "id": pid,
+                    "nome": produto["nome"],
+                    "preco": float(produto["preco"]),
+                    "qtd": 1,
+                    "categoria": produto.get("categoria", "Outros")
+                }
             )
 
         self._render_catalogo()
@@ -411,18 +466,35 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         self.lbl_total.configure(text=f"Total: {theme.fmt_dinheiro(total)}")
 
     def _finalizar(self):
-        # exemplo: cliente_id opcional
+        if not self.carrinho:
+            return
+
+        itens = [{"produto_id": item["id"], "qtd": item["qtd"]} for item in self.carrinho]
         cliente_id = self.cliente_selecionado["id"] if self.cliente_selecionado else None
-        forma_pag = self.combo_pag.get()
 
-        venda = {
-            "cliente_id": cliente_id,
-            "forma_pagamento": forma_pag,
-            "itens": list(self.carrinho),
-        }
-
-        # depois: gravar venda no banco / gerar comprovante
-        # print(venda)
+        try:
+            self.sistema.registrar_venda(
+                tipo="BALCAO",
+                cliente_id=cliente_id,
+                itens=itens,
+                forma_pagamento=self.combo_pag.get(),
+            )
+        except Exception as e:
+            CTkMessagebox(
+                title="Erro ao finalizar",
+                message=f"Não foi possível concluir a venda.\n\nDetalhes: {e}",
+                icon="cancel"
+            )
+            self._render_catalogo()
+            return
 
         self.carrinho = []
+        self._remover_cliente()
+        self._render_catalogo()
         self._render_carrinho()
+
+        CTkMessagebox(
+            title="Sucesso",
+            message="Venda registrada com sucesso!",
+            icon="check"
+        )

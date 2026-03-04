@@ -26,9 +26,10 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
     - Direita: formulário de agendamento
     """
 
-    def __init__(self, master, on_open_agenda=None, on_agenda_changed=None):
+    def __init__(self, master, sistema=None, on_open_agenda=None, on_agenda_changed=None):
         super().__init__(master, fg_color=theme.COR_FUNDO)
 
+        self.sistema = sistema
         self.on_open_agenda = on_open_agenda
         self.on_agenda_changed = on_agenda_changed
 
@@ -51,17 +52,297 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
 
         self._agendamento_em_edicao_id = None
 
-        self.carrinhos = self._mock_carrinhos()
-        self.funcionarios = self._mock_funcionarios()
-        self.agendamentos = self._mock_agendamentos()
+        # Dados operacionais
+        self.carrinhos = []
+        self.funcionarios = []
+        self.agendamentos = []
 
         self.tree_carrinhos = None
         self._frame_tree_carrinhos = None
 
+        self._carregar_dados_operacionais()
+
         self._painel_carrinhos_ui()
         self._form_agendamento_ui()
 
+        self._atualizar_combos_operacionais()
         self._render_lista_carrinhos()
+
+    # -------------------- SISTEMA --------------------
+    def _obter_metodo_sistema(self, *nomes):
+        if not self.sistema:
+            return None
+        for nome in nomes:
+            metodo = getattr(self.sistema, nome, None)
+            if callable(metodo):
+                return metodo
+        return None
+
+    def _listar_carrinhos_sistema(self):
+        metodo = self._obter_metodo_sistema("listar_carrinhos")
+        if not metodo:
+            return False, []
+
+        try:
+            itens = metodo()
+        except TypeError:
+            try:
+                itens = metodo(termo="")
+            except Exception:
+                return True, []
+        except Exception:
+            return True, []
+
+        if not isinstance(itens, list):
+            return True, []
+
+        normalizados = []
+        for c in itens:
+            if not isinstance(c, dict):
+                continue
+
+            try:
+                cid = int(c.get("id"))
+            except Exception:
+                continue
+
+            normalizados.append({
+                "id": cid,
+                "id_externo": str(
+                    c.get("id_externo")
+                    or c.get("codigo")
+                    or c.get("identificacao")
+                    or f"CAR-{cid:02d}"
+                ),
+                "nome": str(c.get("nome") or f"Carrinho {cid}"),
+                "capacidade": int(c.get("capacidade", 0) or 0),
+                "status": str(c.get("status") or "Disponível"),
+            })
+
+        return True, normalizados
+
+    def _listar_funcionarios_sistema(self):
+        metodo = self._obter_metodo_sistema("listar_funcionarios")
+        if not metodo:
+            return False, []
+
+        try:
+            itens = metodo()
+        except TypeError:
+            try:
+                itens = metodo(termo="")
+            except Exception:
+                return True, []
+        except Exception:
+            return True, []
+
+        if not isinstance(itens, list):
+            return True, []
+
+        normalizados = []
+        for f in itens:
+            if not isinstance(f, dict):
+                continue
+
+            try:
+                fid = int(f.get("id"))
+            except Exception:
+                continue
+
+            normalizados.append({
+                "id": fid,
+                "nome": str(f.get("nome") or f"Funcionário {fid}"),
+                "telefone": str(f.get("telefone") or ""),
+                "cargo": str(f.get("cargo") or ""),
+            })
+
+        return True, normalizados
+
+    def _parse_data_agendamento(self, valor):
+        if isinstance(valor, dt.date):
+            return valor
+
+        if isinstance(valor, str):
+            txt = valor.strip()
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+                try:
+                    return dt.datetime.strptime(txt, fmt).date()
+                except ValueError:
+                    pass
+
+        return None
+
+    def _listar_agendamentos_sistema(self):
+        metodo = self._obter_metodo_sistema("listar_agendamentos")
+        if not metodo:
+            return False, []
+
+        try:
+            itens = metodo()
+        except TypeError:
+            try:
+                itens = metodo(data=self.data_var.get().strip())
+            except Exception:
+                return True, []
+        except Exception:
+            return True, []
+
+        if not isinstance(itens, list):
+            return True, []
+
+        normalizados = []
+        for a in itens:
+            if not isinstance(a, dict):
+                continue
+
+            data_obj = self._parse_data_agendamento(
+                a.get("data") or a.get("data_agendamento")
+            )
+            if not data_obj:
+                continue
+
+            inicio = str(a.get("inicio") or a.get("hora_inicio") or "08:00")
+            fim = str(a.get("fim") or a.get("hora_fim") or "12:00")
+
+            inicio_min = self._parse_hora(inicio)
+            fim_min = self._parse_hora(fim)
+            if inicio_min is None or fim_min is None:
+                continue
+
+            try:
+                aid = int(a.get("id"))
+            except Exception:
+                continue
+
+            try:
+                carrinho_id = int(a.get("carrinho_id"))
+            except Exception:
+                carrinho_id = None
+
+            try:
+                motorista_id = int(
+                    a.get("motorista_id")
+                    or a.get("funcionario_id")
+                    or a.get("responsavel_id")
+                )
+            except Exception:
+                motorista_id = None
+
+            carrinho = next((c for c in self.carrinhos if c["id"] == carrinho_id), None)
+            funcionario = next((f for f in self.funcionarios if f["id"] == motorista_id), None)
+
+            normalizados.append({
+                "id": aid,
+                "data": data_obj,
+                "inicio": inicio,
+                "fim": fim,
+                "inicio_min": inicio_min,
+                "fim_min": fim_min,
+                "carrinho_id": carrinho_id,
+                "carrinho_nome": str(
+                    a.get("carrinho_nome")
+                    or (carrinho["nome"] if carrinho else "")
+                ),
+                "carrinho_id_externo": str(
+                    a.get("carrinho_id_externo")
+                    or a.get("carrinho_codigo")
+                    or (carrinho["id_externo"] if carrinho else "")
+                ),
+                "motorista_id": motorista_id,
+                "motorista_nome": str(
+                    a.get("motorista_nome")
+                    or a.get("funcionario_nome")
+                    or a.get("responsavel_nome")
+                    or (funcionario["nome"] if funcionario else "")
+                ),
+                "local": str(a.get("local") or ""),
+                "status": str(a.get("status") or "Agendado"),
+                "obs": str(a.get("obs") or a.get("observacao") or ""),
+            })
+
+        return True, normalizados
+
+    def _carregar_dados_operacionais(self):
+        suportado_carrinhos, carrinhos = self._listar_carrinhos_sistema()
+        if suportado_carrinhos or not self.carrinhos:
+            self.carrinhos = carrinhos
+
+        suportado_func, funcs = self._listar_funcionarios_sistema()
+        if suportado_func or not self.funcionarios:
+            self.funcionarios = funcs
+
+        suportado_ag, ags = self._listar_agendamentos_sistema()
+        if suportado_ag or not self.agendamentos:
+            self.agendamentos = ags
+
+    def _atualizar_combos_operacionais(self):
+        if hasattr(self, "combo_carrinho"):
+            atual = self.combo_carrinho.get().strip()
+            opcoes = [f'{c["nome"]} ({c["id_externo"]})' for c in self.carrinhos] or ["(nenhum carrinho)"]
+            self.combo_carrinho.configure(values=opcoes)
+            self.combo_carrinho.set(atual if atual in opcoes else opcoes[0])
+
+        if hasattr(self, "combo_motorista"):
+            atual = self.combo_motorista.get().strip()
+            opcoes = [f'{f["nome"]} • {f["telefone"]}' for f in self.funcionarios] or ["(nenhum responsável)"]
+            self.combo_motorista.configure(values=opcoes)
+            self.combo_motorista.set(atual if atual in opcoes else opcoes[0])
+
+    def _salvar_agendamento_no_sistema(self, novo):
+        metodo = self._obter_metodo_sistema("salvar_agendamento")
+        if not metodo:
+            return False
+
+        data_txt = novo["data"].strftime("%Y-%m-%d")
+
+        try:
+            metodo(
+                data=data_txt,
+                hora_inicio=novo["inicio"],
+                hora_fim=novo["fim"],
+                carrinho_id=novo["carrinho_id"],
+                funcionario_id=novo["motorista_id"],
+                local=novo["local"],
+                status=novo["status"],
+                observacao=novo["obs"],
+                agendamento_id=self._agendamento_em_edicao_id,
+            )
+            return True
+        except TypeError:
+            try:
+                metodo(
+                    data=data_txt,
+                    inicio=novo["inicio"],
+                    fim=novo["fim"],
+                    carrinho_id=novo["carrinho_id"],
+                    motorista_id=novo["motorista_id"],
+                    local=novo["local"],
+                    status=novo["status"],
+                    obs=novo["obs"],
+                    agendamento_id=self._agendamento_em_edicao_id,
+                )
+                return True
+            except Exception:
+                return False
+        except Exception:
+            return False
+
+    def _remover_agendamento_do_sistema(self, aid):
+        metodo = self._obter_metodo_sistema("excluir_agendamento", "remover_agendamento")
+        if not metodo:
+            return False
+
+        try:
+            metodo(aid)
+            return True
+        except TypeError:
+            try:
+                metodo(agendamento_id=aid)
+                return True
+            except Exception:
+                return False
+        except Exception:
+            return False
 
     # -------------------- PAINEL ESQ --------------------
     def _painel_carrinhos_ui(self):
@@ -300,7 +581,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
 
         self.combo_carrinho = ctk.CTkComboBox(
             form,
-            values=[f'{c["nome"]} ({c["id_externo"]})' for c in self.carrinhos],
+            values=["(nenhum carrinho)"],
             height=34,
             fg_color=theme.COR_BOTAO,
             button_color=theme.COR_SELECIONADO,
@@ -316,7 +597,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
 
         self.combo_motorista = ctk.CTkComboBox(
             form,
-            values=[f'{f["nome"]} • {f["telefone"]}' for f in self.funcionarios],
+            values=["(nenhum responsável)"],
             variable=self.motorista_var,
             height=34,
             fg_color=theme.COR_BOTAO,
@@ -420,25 +701,6 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
             command=self._abrir_aba_agenda
         ).grid(row=4, column=0, padx=16, pady=(0, 16), sticky="ew")
 
-    # -------------------- MOCKS --------------------
-    def _mock_carrinhos(self):
-        return [
-            {"id": 1, "id_externo": "CAR-01", "nome": "Carrinho 01", "capacidade": 250, "status": "Disponível"},
-            {"id": 2, "id_externo": "CAR-02", "nome": "Carrinho 02", "capacidade": 220, "status": "Em rota"},
-            {"id": 3, "id_externo": "CAR-03", "nome": "Carrinho 03", "capacidade": 260, "status": "Disponível"},
-            {"id": 4, "id_externo": "CAR-04", "nome": "Carrinho 04", "capacidade": 210, "status": "Manutenção"},
-        ]
-
-    def _mock_funcionarios(self):
-        return [
-            {"id": 1, "nome": "Carlos Lima", "telefone": "(91) 99999-0001"},
-            {"id": 2, "nome": "Ana Paula", "telefone": "(91) 98888-0002"},
-            {"id": 3, "nome": "Rogério Silva", "telefone": "(91) 97777-0003"},
-        ]
-
-    def _mock_agendamentos(self):
-        return []
-
     # -------------------- AJUSTES DINÂMICOS TREEVIEWS --------------------
     def _ajustar_colunas_tree_carrinhos(self, event=None):
         if not self.tree_carrinhos or not self._frame_tree_carrinhos:
@@ -457,6 +719,9 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
     def _render_lista_carrinhos(self):
         if not self.tree_carrinhos:
             return
+
+        self._carregar_dados_operacionais()
+        self._atualizar_combos_operacionais()
 
         for item in self.tree_carrinhos.get_children():
             self.tree_carrinhos.delete(item)
@@ -566,7 +831,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
             return False, "Hora de fim deve ser maior que a de início."
 
         carrinho_txt = self.combo_carrinho.get().strip()
-        if not carrinho_txt:
+        if not carrinho_txt or carrinho_txt == "(nenhum carrinho)":
             return False, "Selecione um carrinho."
 
         carrinho = self._resolver_carrinho_por_texto(carrinho_txt)
@@ -574,7 +839,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
             return False, "Carrinho selecionado não encontrado."
 
         motorista_txt = self.combo_motorista.get().strip()
-        if not motorista_txt:
+        if not motorista_txt or motorista_txt == "(nenhum responsável)":
             return False, "Selecione um responsável."
 
         mot = self._resolver_motorista_por_texto(motorista_txt)
@@ -618,6 +883,9 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         return conflitos
 
     def _salvar_agendamento(self):
+        self._carregar_dados_operacionais()
+        self._atualizar_combos_operacionais()
+
         ok, msg = self._validar_inputs()
         if not ok:
             messagebox.showwarning("Validação", msg)
@@ -654,16 +922,21 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
             messagebox.showerror("Conflito de horário", "\n".join(conflitos))
             return
 
-        if self._agendamento_em_edicao_id is None:
-            self.agendamentos.append(novo)
-        else:
-            for i, a in enumerate(self.agendamentos):
-                if a["id"] == self._agendamento_em_edicao_id:
-                    self.agendamentos[i] = novo
-                    break
+        salvo_no_sistema = self._salvar_agendamento_no_sistema(novo)
 
+        if not salvo_no_sistema:
+            if self._agendamento_em_edicao_id is None:
+                self.agendamentos.append(novo)
+            else:
+                for i, a in enumerate(self.agendamentos):
+                    if a["id"] == self._agendamento_em_edicao_id:
+                        self.agendamentos[i] = novo
+                        break
+
+        self._carregar_dados_operacionais()
         self._limpar_form()
         self._notificar_agenda()
+        self._render_lista_carrinhos()
         messagebox.showinfo("Agendamento", "Agendamento salvo com sucesso!")
 
     def _prox_id(self):
@@ -677,13 +950,8 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         self.combo_status_ag.set("Agendado")
         self._set_obs("")
 
-    def _agendamento_por_tag(self, tag):
-        if not tag.startswith("ag-"):
-            return None
-        aid = int(tag.split("-")[1])
-        return next((a for a in self.agendamentos if a["id"] == aid), None)
-
     def _editar_agendamento_por_id(self, aid: int):
+        self._carregar_dados_operacionais()
         a = next((x for x in self.agendamentos if x["id"] == aid), None)
         if not a:
             return
@@ -703,12 +971,21 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         self._set_obs(a.get("obs", ""))
 
     def remover_agendamento_por_id(self, aid: int):
-        self.agendamentos = [x for x in self.agendamentos if x["id"] != aid]
+        removido_no_sistema = self._remover_agendamento_do_sistema(aid)
+
+        if not removido_no_sistema:
+            self.agendamentos = [x for x in self.agendamentos if x["id"] != aid]
+
+        self._carregar_dados_operacionais()
+
         if self._agendamento_em_edicao_id == aid:
             self._limpar_form()
+
         self._notificar_agenda()
 
     def obter_agendamentos_do_dia(self):
+        self._carregar_dados_operacionais()
+
         try:
             data = dt.date.fromisoformat(self.data_var.get().strip())
         except ValueError:
@@ -947,8 +1224,10 @@ class PaginaAgendaDoDia(ctk.CTkFrame):
 # ABA 3: DELIVERY
 # ===========================================================
 class PaginaDelivery(ctk.CTkFrame):
-    def __init__(self, master):
+    def __init__(self, master, sistema):
         super().__init__(master, fg_color=theme.COR_FUNDO)
+
+        self.sistema = sistema
 
         self.grid_columnconfigure(0, weight=4, uniform="dl_cols")
         self.grid_columnconfigure(1, weight=3, uniform="dl_cols")
@@ -978,8 +1257,10 @@ class PaginaDelivery(ctk.CTkFrame):
         self.obs_widget = None
         self._pedido_em_edicao_id = None
 
-        self.produtos = self._mock_produtos()
-        self.entregadores = self._mock_entregadores()
+        self.produtos = []
+        self._mapa_produtos_combo = {}
+
+        self.entregadores = self._carregar_entregadores()
         self.entregas = []
 
         self.tree_itens = None
@@ -993,8 +1274,18 @@ class PaginaDelivery(ctk.CTkFrame):
         self._painel_itens()
         self._lista_dia()
 
+        self._carregar_produtos_combo()
         self._render_itens()
         self._render_entregas_dia()
+
+    def _obter_metodo_sistema(self, *nomes):
+        if not self.sistema:
+            return None
+        for nome in nomes:
+            metodo = getattr(self.sistema, nome, None)
+            if callable(metodo):
+                return metodo
+        return None
 
     def _titulo(self):
         ctk.CTkLabel(
@@ -1156,7 +1447,7 @@ class PaginaDelivery(ctk.CTkFrame):
         ctk.CTkLabel(box_cfg, text="Entregador", text_color=theme.COR_TEXTO).grid(row=1, column=2, padx=10, sticky="w")
         self.combo_entregador = ctk.CTkComboBox(
             box_cfg,
-            values=[f'{e["nome"]} • {e["telefone"]}' for e in self.entregadores],
+            values=[f'{e["nome"]} • {e["telefone"]}' for e in self.entregadores] or ["(nenhum entregador)"],
             variable=self.entregador_var,
             fg_color=theme.COR_BOTAO,
             button_color=theme.COR_SELECIONADO,
@@ -1169,6 +1460,10 @@ class PaginaDelivery(ctk.CTkFrame):
             border_color=theme.COR_HOVER
         )
         self.combo_entregador.grid(row=2, column=2, padx=10, pady=(0, 8), sticky="ew")
+        if self.entregadores:
+            self.combo_entregador.set(f'{self.entregadores[0]["nome"]} • {self.entregadores[0]["telefone"]}')
+        else:
+            self.combo_entregador.set("(nenhum entregador)")
 
         ctk.CTkLabel(box_cfg, text="Pagamento", text_color=theme.COR_TEXTO).grid(row=1, column=3, padx=10, sticky="w")
         self.combo_pag = ctk.CTkComboBox(
@@ -1218,7 +1513,7 @@ class PaginaDelivery(ctk.CTkFrame):
         ctk.CTkLabel(box_cfg, text="Produto", text_color=theme.COR_TEXTO).grid(row=5, column=0, columnspan=2, padx=10, sticky="w")
         self.combo_prod = ctk.CTkComboBox(
             box_cfg,
-            values=[f'{p["nome"]} • {theme.fmt_dinheiro(p["preco"])}' for p in self.produtos],
+            values=["(sem produtos)"],
             variable=self.produto_var,
             fg_color=theme.COR_BOTAO,
             button_color=theme.COR_SELECIONADO,
@@ -1469,30 +1764,158 @@ class PaginaDelivery(ctk.CTkFrame):
         self.tree.column("valor", width=c3, anchor="w")
         self.tree.column("status", width=c4, anchor="w")
 
-    def _mock_produtos(self):
-        return [
-            {"id": 1, "nome": "Açaí 500ml", "preco": 18.00},
-            {"id": 2, "nome": "Copo 300ml (Chocolate)", "preco": 12.00},
-            {"id": 3, "nome": "Picolé (Limão)", "preco": 5.00},
-            {"id": 4, "nome": "Casquinha", "preco": 7.50},
-        ]
+    # -------------------- DADOS / SISTEMA --------------------
+    def _listar_funcionarios_sistema(self):
+        metodo = self._obter_metodo_sistema("listar_funcionarios")
+        if not metodo:
+            return []
 
-    def _mock_entregadores(self):
-        return [
-            {"id": 1, "nome": "Diego Motoboy", "telefone": "(91) 99999-1010"},
-            {"id": 2, "nome": "Larissa Entregas", "telefone": "(91) 98888-2020"},
-        ]
+        try:
+            itens = metodo()
+        except TypeError:
+            try:
+                itens = metodo(termo="")
+            except Exception:
+                return []
+        except Exception:
+            return []
 
+        if not isinstance(itens, list):
+            return []
+
+        normalizados = []
+        for f in itens:
+            if not isinstance(f, dict):
+                continue
+
+            try:
+                fid = int(f.get("id"))
+            except Exception:
+                continue
+
+            normalizados.append({
+                "id": fid,
+                "nome": str(f.get("nome") or f"Funcionário {fid}"),
+                "telefone": str(f.get("telefone") or ""),
+                "cargo": str(f.get("cargo") or ""),
+            })
+
+        return normalizados
+
+    def _carregar_entregadores(self):
+        metodo = self._obter_metodo_sistema("listar_entregadores")
+        if metodo:
+            try:
+                itens = metodo()
+                if isinstance(itens, list) and itens:
+                    normalizados = []
+                    for e in itens:
+                        if not isinstance(e, dict):
+                            continue
+                        try:
+                            eid = int(e.get("id"))
+                        except Exception:
+                            continue
+                        normalizados.append({
+                            "id": eid,
+                            "nome": str(e.get("nome") or f"Funcionário {eid}"),
+                            "telefone": str(e.get("telefone") or ""),
+                            "cargo": str(e.get("cargo") or ""),
+                        })
+                    if normalizados:
+                        return normalizados
+            except Exception:
+                pass
+
+        funcionarios = self._listar_funcionarios_sistema()
+        if not funcionarios:
+            return []
+
+        filtrados = [
+            f for f in funcionarios
+            if any(chave in f["cargo"].lower() for chave in ("entreg", "motoboy", "moto"))
+        ]
+        return filtrados or funcionarios
+
+    def _listar_catalogo(self):
+        metodo = self._obter_metodo_sistema("listar_catalogo")
+        if not metodo:
+            return []
+
+        try:
+            itens = metodo()
+        except TypeError:
+            try:
+                itens = metodo("")
+            except Exception:
+                itens = []
+        except Exception:
+            itens = []
+
+        if not isinstance(itens, list):
+            return []
+
+        catalogo = []
+        for p in itens:
+            if not isinstance(p, dict):
+                continue
+            if p.get("ativo") is False:
+                continue
+
+            if p.get("eh_insumo") is True:
+                continue
+            if str(p.get("tipo_item", "")).strip().lower() == "insumo":
+                continue
+
+            try:
+                preco = float(p.get("preco", 0) or 0)
+            except Exception:
+                preco = 0.0
+
+            try:
+                estoque = int(p.get("estoque", 0) or 0)
+            except Exception:
+                estoque = 0
+
+            catalogo.append({
+                "id": p["id"],
+                "nome": p.get("nome", "Produto"),
+                "preco": preco,
+                "estoque": estoque,
+            })
+
+        return catalogo
+
+    def _carregar_produtos_combo(self):
+        self.produtos = self._listar_catalogo()
+        self._mapa_produtos_combo = {}
+
+        opcoes = []
+        for p in self.produtos:
+            texto = f'{p["nome"]} • {theme.fmt_dinheiro(p["preco"])}'
+            opcoes.append(texto)
+            self._mapa_produtos_combo[texto] = p
+
+        if not opcoes:
+            opcoes = ["(sem produtos)"]
+
+        self.combo_prod.configure(values=opcoes)
+        self.combo_prod.set(opcoes[0])
+
+    def _resolver_produto_combo(self):
+        texto = self.combo_prod.get().strip()
+        return self._mapa_produtos_combo.get(texto)
+
+    def _status_gera_venda(self, status):
+        return status in {"Em preparo", "Em rota", "Entregue"}
+
+    # -------------------- ITENS --------------------
     def _adicionar_item(self):
-        txt = self.combo_prod.get().strip()
-        if not txt:
-            messagebox.showwarning("Itens", "Selecione um produto.")
-            return
+        self._carregar_produtos_combo()
 
-        nome = txt.split("•")[0].strip()
-        prod = next((p for p in self.produtos if p["nome"] == nome), None)
+        prod = self._resolver_produto_combo()
         if not prod:
-            messagebox.showwarning("Itens", "Produto inválido.")
+            messagebox.showwarning("Itens", "Selecione um produto válido.")
             return
 
         try:
@@ -1504,6 +1927,12 @@ class PaginaDelivery(ctk.CTkFrame):
             return
 
         existente = next((i for i in self.carrinho_itens if i["id"] == prod["id"]), None)
+        qtd_atual = existente["qtd"] if existente else 0
+
+        if prod.get("estoque", 0) > 0 and (qtd_atual + qtd) > prod["estoque"]:
+            messagebox.showwarning("Itens", "Quantidade acima do estoque disponível.")
+            return
+
         if existente:
             existente["qtd"] += qtd
         else:
@@ -1578,6 +2007,7 @@ class PaginaDelivery(ctk.CTkFrame):
         if txt:
             self.obs_widget.insert("1.0", txt)
 
+    # -------------------- VALIDAÇÃO / CÁLCULO --------------------
     def _validar(self):
         if not self.cli_nome_var.get().strip():
             return False, "Informe o nome do cliente."
@@ -1612,6 +2042,7 @@ class PaginaDelivery(ctk.CTkFrame):
     def _calcular_total(self, itens, taxa):
         return sum(i["preco"] * i["qtd"] for i in itens) + taxa
 
+    # -------------------- SALVAR / VENDAS --------------------
     def _salvar_pedido(self):
         ok, msg = self._validar()
         if not ok:
@@ -1625,6 +2056,12 @@ class PaginaDelivery(ctk.CTkFrame):
 
         total = self._calcular_total(self.carrinho_itens, taxa)
         ent = self._resolver_entregador(self.combo_entregador.get().strip())
+
+        pedido_existente = None
+        if self._pedido_em_edicao_id is not None:
+            pedido_existente = next((p for p in self.entregas if p["id"] == self._pedido_em_edicao_id), None)
+
+        venda_ja_registrada = pedido_existente.get("venda_registrada", False) if pedido_existente else False
 
         pedido = {
             "id": self._pedido_em_edicao_id or self._prox_id(),
@@ -1648,8 +2085,43 @@ class PaginaDelivery(ctk.CTkFrame):
             "status": self.combo_status.get().strip(),
             "entregador_id": ent["id"] if ent else None,
             "entregador_nome": ent["nome"] if ent else "",
-            "obs": self._get_obs()
+            "obs": self._get_obs(),
+            "venda_registrada": venda_ja_registrada
         }
+
+        precisa_registrar_venda = self._status_gera_venda(pedido["status"]) and not venda_ja_registrada
+
+        if precisa_registrar_venda:
+            try:
+                try:
+                    self.sistema.registrar_venda(
+                        tipo="DELIVERY",
+                        cliente_id=None,
+                        itens=[{"produto_id": i["id"], "qtd": i["qtd"]} for i in self.carrinho_itens],
+                        forma_pagamento=self.combo_pag.get(),
+                        desconto=0,
+                        taxa_entrega=taxa,
+                        observacao=self._get_obs(),
+                        data_venda=self.data_var.get().strip(),
+                    )
+                except TypeError:
+                    self.sistema.registrar_venda(
+                        tipo="DELIVERY",
+                        cliente_id=None,
+                        itens=[{"produto_id": i["id"], "qtd": i["qtd"]} for i in self.carrinho_itens],
+                        forma_pagamento=self.combo_pag.get(),
+                        desconto=0,
+                        observacao=self._get_obs(),
+                        data_venda=self.data_var.get().strip(),
+                    )
+            except Exception as e:
+                messagebox.showerror(
+                    "Erro",
+                    f"Não foi possível registrar a venda do delivery.\n\nDetalhes: {e}"
+                )
+                return
+
+            pedido["venda_registrada"] = True
 
         if self._pedido_em_edicao_id is None:
             self.entregas.append(pedido)
@@ -1664,7 +2136,7 @@ class PaginaDelivery(ctk.CTkFrame):
         messagebox.showinfo("Delivery", "Pedido salvo com sucesso!")
 
     def _resolver_entregador(self, txt):
-        if not txt:
+        if not txt or txt == "(nenhum entregador)":
             return None
         nome = txt.split("•")[0].strip()
         return next((e for e in self.entregadores if e["nome"] == nome), None)
@@ -1683,10 +2155,13 @@ class PaginaDelivery(ctk.CTkFrame):
         self.prev_saida_var.set("00:30")
         self.pag_var.set("Pix")
         self.status_var.set("Pendente")
+        self.taxa_var.set("5.00")
         self.carrinho_itens = []
         self._set_obs("")
+        self._carregar_produtos_combo()
         self._render_itens()
 
+    # -------------------- LISTA DO DIA --------------------
     def _render_entregas_dia(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
@@ -1759,6 +2234,7 @@ class PaginaDelivery(ctk.CTkFrame):
 
         self._set_obs(p.get("obs", ""))
         self.carrinho_itens = [dict(i) for i in p["itens"]]
+        self._carregar_produtos_combo()
         self._render_itens()
         messagebox.showinfo("Editar", "Pedido carregado para edição.")
 
@@ -1798,8 +2274,10 @@ class PaginaOperacaoCarrinhos(ctk.CTkFrame):
       - Agenda do dia
       - Delivery
     """
-    def __init__(self, master):
+    def __init__(self, master, sistema):
         super().__init__(master, fg_color=theme.COR_FUNDO)
+
+        self.sistema = sistema
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -1838,6 +2316,7 @@ class PaginaOperacaoCarrinhos(ctk.CTkFrame):
 
         self.pg_ag = PaginaAgendamentoCarrinhos(
             tab_ag,
+            sistema=self.sistema,
             on_open_agenda=self._ir_para_aba_agenda,
             on_agenda_changed=self._atualizar_aba_agenda
         )
@@ -1850,7 +2329,7 @@ class PaginaOperacaoCarrinhos(ctk.CTkFrame):
         )
         self.pg_agenda.pack(fill="both", expand=True, padx=6, pady=6)
 
-        self.pg_dl = PaginaDelivery(tab_dl)
+        self.pg_dl = PaginaDelivery(tab_dl, self.sistema)
         self.pg_dl.pack(fill="both", expand=True, padx=6, pady=6)
 
     def _ir_para_aba_agenda(self):
