@@ -1,95 +1,69 @@
-from datetime import datetime, date
-from decimal import Decimal
+﻿from __future__ import annotations
 
-from mysql.connector import Error
+from datetime import datetime, date, timedelta
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
 
 from app.database.connection import conectar
+
 from app.database.repositories.clientes_repository import ClientesRepository
 from app.database.repositories.fornecedores_repository import FornecedoresRepository
 from app.database.repositories.funcionarios_repository import FuncionariosRepository
 from app.database.repositories.fidelidade_repository import FidelidadeRepository
+from app.database.repositories.produtos_repository import ProdutosRepository
+from app.database.repositories.usuarios_repository import UsuariosRepository
+
+from app.database.repositories.formas_pagamento_repository import FormasPagamentoRepository
+from app.database.repositories.vendas_repository import VendasRepository
+from app.database.repositories.fechamentos_repository import FechamentosRepository
+from app.database.repositories.carrinhos_repository import CarrinhosRepository
+from app.database.repositories.agendamentos_repository import AgendamentosRepository
 
 
 class SistemaService:
     """
-    Núcleo central do sistema.
-    Todas as páginas devem ler e gravar dados aqui.
-
-    Neste momento:
-    - Clientes       -> MySQL via ClientesRepository
-    - Fornecedores   -> MySQL via FornecedoresRepository
-    - Funcionários   -> MySQL via FuncionariosRepository
-    - Fidelidade     -> MySQL via FidelidadeRepository (mov_fidelidade + update saldo)
-    - Demais módulos continuam em memória
+    Núcleo central do sistema Geladoce.
     """
 
     def __init__(self):
-        # Repositories reais (MySQL)
         self.clientes_repo = ClientesRepository()
         self.fornecedores_repo = FornecedoresRepository()
         self.funcionarios_repo = FuncionariosRepository()
+        self.usuarios_repo = UsuariosRepository()
         self.fidelidade_repo = FidelidadeRepository()
+        self.produtos_repo = ProdutosRepository()
 
-        # Sequências locais (mantidas para módulos ainda em memória)
-        self._seq = {
-            "cliente": 1,       # mantido por compatibilidade
-            "produto": 1,
-            "venda": 1,
-            "mov_fidelidade": 1,  # mantido por compatibilidade
-            "agendamento": 1,
-            "delivery": 1,
-            "fechamento": 1,
-            "funcionario": 1,   # mantido por compatibilidade
-            "carrinho": 1,
-            "fornecedor": 1,    # mantido por compatibilidade
-        }
+        self.formas_repo = FormasPagamentoRepository()
+        self.vendas_repo = VendasRepository()
+        self.fechamentos_repo = FechamentosRepository()
+        self.carrinhos_repo = CarrinhosRepository()
+        self.agendamentos_repo = AgendamentosRepository()
 
-        # Cache transitório (evite guardar pontos aqui; agora é MySQL)
-        # Mantemos apenas fallback para valores que eventualmente não foram persistidos.
-        self._clientes_estado = {}
-
-        self._produtos = []
-        self._estoque = {}           # produto_id -> quantidade
-        self._vendas = []            # balcão, revenda, delivery
-        self._agendamentos = []
-        self._deliveries = []
-        self._fechamentos = []
-        self._carrinhos = []
+        self._clientes_estado: Dict[int, Dict[str, Any]] = {}
 
     # ======================================================
     # HELPERS
     # ======================================================
-    def _next_id(self, chave):
-        valor = self._seq[chave]
-        self._seq[chave] += 1
-        return valor
-
-    def _to_decimal(self, valor):
+    def _to_decimal(self, valor: Any) -> Decimal:
         if isinstance(valor, Decimal):
             return valor
-
         txt = str(valor).strip().replace("R$", "").replace(" ", "")
         if not txt:
             return Decimal("0")
-
-        # "1.250,50" -> "1250.50"
         if "," in txt and "." in txt:
             txt = txt.replace(".", "").replace(",", ".")
         else:
             txt = txt.replace(",", ".")
-
         try:
             return Decimal(txt)
         except Exception:
             return Decimal("0")
 
-    def _parse_datetime(self, valor):
+    def _parse_datetime(self, valor: Any) -> datetime:
         if isinstance(valor, datetime):
             return valor
-
         if isinstance(valor, date):
             return datetime(valor.year, valor.month, valor.day)
-
         txt = str(valor).strip()
         formatos = [
             "%d/%m/%Y %H:%M",
@@ -103,30 +77,23 @@ class SistemaService:
                 return datetime.strptime(txt, fmt)
             except ValueError:
                 pass
-
         return datetime.now()
 
-    def _parse_date(self, valor):
+    def _parse_date(self, valor: Any) -> Optional[date]:
         if isinstance(valor, datetime):
             return valor.date()
-
         if isinstance(valor, date):
             return valor
-
         txt = str(valor).strip()
-        formatos = [
-            "%Y-%m-%d",
-            "%d/%m/%Y",
-        ]
+        formatos = ["%Y-%m-%d", "%d/%m/%Y"]
         for fmt in formatos:
             try:
                 return datetime.strptime(txt, fmt).date()
             except ValueError:
                 pass
-
         return None
 
-    def _hora_para_minutos(self, valor):
+    def _hora_para_minutos(self, valor: Any) -> Optional[int]:
         try:
             txt = str(valor).strip()
             h, m = txt.split(":")
@@ -138,82 +105,28 @@ class SistemaService:
             pass
         return None
 
-    def _somente_digitos(self, valor):
+    def _somente_digitos(self, valor: Any) -> str:
         return "".join(ch for ch in str(valor) if ch.isdigit())
 
-    def _normalizar_categoria(self, categoria):
-        mapa = {
-            "massa": "Sorvete",
-            "sorvete": "Sorvete",
-            "picolé": "Picolé",
-            "picole": "Picolé",
-            "açaí": "Açaí",
-            "acai": "Açaí",
-            "outros": "Outros",
-            "outro": "Outros",
-        }
-        return mapa.get(str(categoria).strip().lower(), "Outros")
-
-    def _normalizar_tipo_item(self, tipo_item=None, eh_insumo=None):
-        if eh_insumo is True:
-            return "Insumo"
-
-        txt = str(tipo_item).strip().lower() if tipo_item is not None else ""
-        if txt in ("insumo", "insumos", "matéria-prima", "materia-prima", "materia prima"):
-            return "Insumo"
-
-        return "Produto"
-
-    def _normalizar_status_carrinho(self, status):
-        txt = str(status).strip()
-        validos = {"Disponível", "Em rota", "Manutenção"}
-        return txt if txt in validos else "Disponível"
-
-    def _normalizar_status_agendamento(self, status):
-        txt = str(status).strip()
-        validos = {"Agendado", "Confirmado", "Cancelado"}
-        return txt if txt in validos else "Agendado"
-
-    def _normalizar_tipo_acesso(self, tipo_acesso):
-        txt = str(tipo_acesso).strip().lower()
-        if txt == "administrador":
-            return "Administrador"
-        return "Colaborador"
-
-    def _merge_estado_cliente(self, cliente):
-        """
-        Mescla os dados reais vindos do banco com um cache transitório.
-        IMPORTANTE: não sobrescrevemos pontos aqui (agora é MySQL).
-        """
+    def _merge_estado_cliente(self, cliente: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not cliente:
             return None
-
         base = dict(cliente)
         cid = base.get("id")
         if cid in self._clientes_estado:
-            # Só mescla campos que NÃO sejam pontos (MySQL é a fonte da verdade)
             estado = dict(self._clientes_estado[cid])
             estado.pop("pontos_atuais", None)
             estado.pop("total_acumulado", None)
             base.update(estado)
-
         return base
 
-    def _salvar_estado_cliente(self, cliente_id, **campos):
-        """
-        Cache transitório para compatibilidade.
-        Evite salvar pontos aqui; use o MySQL (FidelidadeRepository).
-        """
+    def _salvar_estado_cliente(self, cliente_id: int, **campos) -> None:
         if not cliente_id:
             return
         estado = self._clientes_estado.setdefault(int(cliente_id), {})
         estado.update(campos)
 
     def _atualizar_ultima_compra_db(self, cliente_id: int, data_ref: datetime) -> None:
-        """
-        Atualiza clientes.ultima_compra direto no MySQL.
-        (Evita depender de cache e garante que a Fidelidade enxergue no banco.)
-        """
         conn = None
         cur = None
         try:
@@ -225,7 +138,6 @@ class SistemaService:
             )
             conn.commit()
         except Exception:
-            # fallback: não quebra venda se falhar update
             self._salvar_estado_cliente(cliente_id, ultima_compra=data_ref)
         finally:
             try:
@@ -236,7 +148,22 @@ class SistemaService:
                     conn.close()
 
     # ======================================================
-    # CLIENTES (MYSQL)
+    # USUÁRIOS
+    # ======================================================
+    def garantir_admin_padrao(self) -> None:
+        self.usuarios_repo.garantir_admin_padrao()
+
+    def autenticar(self, login_ou_cpf: str, senha: str) -> Optional[Dict[str, Any]]:
+        return self.usuarios_repo.autenticar(login_ou_cpf, senha)
+
+    def criar_usuario(self, nome: str, cpf: str, senha: str, tipo_acesso: str) -> Dict[str, Any]:
+        return self.usuarios_repo.criar_usuario(nome, cpf, senha, tipo_acesso)
+
+    def alterar_senha(self, login_ou_cpf: str, nova_senha: str) -> None:
+        self.usuarios_repo.alterar_senha(login_ou_cpf, nova_senha)
+
+    # ======================================================
+    # CLIENTES
     # ======================================================
     def salvar_cliente(self, nome, cpf_cnpj, telefone, email="", tipo_cliente="Varejo", cliente_id=None):
         cliente = self.clientes_repo.salvar_cliente(
@@ -250,10 +177,7 @@ class SistemaService:
         return self._merge_estado_cliente(cliente)
 
     def listar_clientes(self, termo="", tipo_cliente=None):
-        clientes = self.clientes_repo.listar_clientes(
-            termo=termo,
-            tipo_cliente=tipo_cliente,
-        )
+        clientes = self.clientes_repo.listar_clientes(termo=termo, tipo_cliente=tipo_cliente)
         return [self._merge_estado_cliente(c) for c in clientes]
 
     def listar_revendedores(self):
@@ -269,7 +193,7 @@ class SistemaService:
         return self.clientes_repo.excluir_cliente(cliente_id)
 
     # ======================================================
-    # FORNECEDORES (MYSQL)
+    # FORNECEDORES
     # ======================================================
     def salvar_fornecedor(self, razao, cnpj, telefone, observacoes="", fornecedor_id=None):
         return self.fornecedores_repo.salvar_fornecedor(
@@ -290,7 +214,7 @@ class SistemaService:
         return self.fornecedores_repo.excluir_fornecedor(fornecedor_id)
 
     # ======================================================
-    # PRODUTOS + ESTOQUE (MEMÓRIA)
+    # PRODUTOS + ESTOQUE
     # ======================================================
     def salvar_produto(
         self,
@@ -298,147 +222,46 @@ class SistemaService:
         categoria,
         preco,
         produto_id=None,
-        estoque_inicial=0,
+        estoque_inicial=None,
         tipo_item=None,
         eh_insumo=None,
+        fornecedor_id=None,
+        ativo=True,
     ):
-        categoria_norm = self._normalizar_categoria(categoria)
-        preco_dec = self._to_decimal(preco)
-
-        if produto_id:
-            produto = self.obter_produto(produto_id)
-            if not produto:
-                raise ValueError("Produto não encontrado.")
-
-            produto["nome"] = nome.strip()
-            produto["categoria"] = categoria_norm
-            produto["preco"] = preco_dec
-
-            if tipo_item is not None or eh_insumo is not None:
-                tipo_item_norm = self._normalizar_tipo_item(tipo_item, eh_insumo)
-                produto["tipo_item"] = tipo_item_norm
-                produto["eh_insumo"] = tipo_item_norm == "Insumo"
-
-            return produto
-
-        tipo_item_norm = self._normalizar_tipo_item(tipo_item, eh_insumo)
-
-        novo = {
-            "id": self._next_id("produto"),
-            "nome": nome.strip(),  # <-- corrigido (antes estava name.strip())
-            "categoria": categoria_norm,
-            "preco": preco_dec,
-            "ativo": True,
-            "tipo_item": tipo_item_norm,
-            "eh_insumo": tipo_item_norm == "Insumo",
-        }
-        self._produtos.append(novo)
-        self._estoque[novo["id"]] = int(estoque_inicial)
-        return novo
+        return self.produtos_repo.salvar_produto(
+            nome=nome,
+            categoria=categoria,
+            preco=preco,
+            produto_id=produto_id,
+            estoque_inicial=estoque_inicial,
+            tipo_item=tipo_item,
+            eh_insumo=eh_insumo,
+            fornecedor_id=fornecedor_id,
+            ativo=ativo,
+        )
 
     def obter_produto(self, produto_id):
-        for p in self._produtos:
-            if p["id"] == produto_id:
-                return p
-        return None
+        return self.produtos_repo.obter_produto(int(produto_id))
 
     def excluir_produto(self, produto_id):
-        self._produtos = [p for p in self._produtos if p["id"] != produto_id]
-        self._estoque.pop(produto_id, None)
+        return self.produtos_repo.excluir_produto(int(produto_id))
 
     def listar_catalogo(self, termo="", categoria="Todos"):
-        termo = str(termo).strip().lower()
-        categoria_filtro = str(categoria).strip()
-        if categoria_filtro != "Todos":
-            categoria_filtro = self._normalizar_categoria(categoria_filtro)
-
-        resultado = []
-
-        for p in self._produtos:
-            if not p["ativo"]:
-                continue
-
-            if categoria_filtro != "Todos" and p["categoria"] != categoria_filtro:
-                continue
-
-            texto = f'{p["nome"]} {p["categoria"]} {p.get("tipo_item", "Produto")}'.lower()
-            if termo and termo not in texto:
-                continue
-
-            resultado.append({
-                "id": p["id"],
-                "nome": p["nome"],
-                "categoria": p["categoria"],
-                "preco": p["preco"],
-                "estoque": self._estoque.get(p["id"], 0),
-                "tipo_item": p.get("tipo_item", "Produto"),
-                "eh_insumo": p.get("eh_insumo", False),
-                "ativo": p["ativo"],
-            })
-
-        return resultado
+        return self.produtos_repo.listar_catalogo(termo=termo, categoria=categoria, incluir_inativos=False)
 
     def ajustar_estoque(self, produto_id, delta):
-        atual = self._estoque.get(produto_id, 0)
-        novo = atual + int(delta)
-
-        if novo < 0:
-            raise ValueError("Estoque insuficiente.")
-
-        self._estoque[produto_id] = novo
-        return novo
+        return self.produtos_repo.ajustar_estoque(int(produto_id), int(delta))
 
     def definir_estoque(self, produto_id, quantidade):
-        qtd = int(quantidade)
-        if qtd < 0:
-            raise ValueError("Quantidade inválida.")
-        self._estoque[produto_id] = qtd
-        return qtd
+        return self.produtos_repo.definir_estoque(int(produto_id), int(quantidade))
 
     def listar_estoque(self, termo=""):
-        termo = str(termo).strip().lower()
-        itens = []
-
-        for p in self._produtos:
-            qtd = self._estoque.get(p["id"], 0)
-
-            if qtd <= 0:
-                status = "Crítico"
-            elif qtd <= 10:
-                status = "Normal"
-            else:
-                status = "Cheio"
-
-            texto = f'{p["nome"]} {p.get("tipo_item", "Produto")}'.lower()
-            if termo and termo not in texto:
-                continue
-
-            itens.append({
-                "id": p["id"],
-                "produto_id": p["id"],
-                "nome": p["nome"],
-                "qtd": qtd,
-                "status": status,
-                "categoria": p["categoria"],
-                "preco": p["preco"],
-                "tipo_item": p.get("tipo_item", "Produto"),
-                "eh_insumo": p.get("eh_insumo", False),
-            })
-
-        return itens
+        return self.produtos_repo.listar_estoque(termo=termo)
 
     # ======================================================
-    # FUNCIONÁRIOS / ENTREGADORES (MYSQL)
+    # FUNCIONÁRIOS / ENTREGADORES
     # ======================================================
-    def salvar_funcionario(
-        self,
-        nome,
-        telefone="",
-        cargo="",
-        funcionario_id=None,
-        cpf="",
-        tipo_acesso="Colaborador",
-    ):
+    def salvar_funcionario(self, nome, telefone="", cargo="", funcionario_id=None, cpf="", tipo_acesso="Colaborador"):
         return self.funcionarios_repo.salvar_funcionario(
             nome=nome,
             telefone=telefone,
@@ -465,75 +288,66 @@ class SistemaService:
         return self.funcionarios_repo.excluir_funcionario(funcionario_id)
 
     # ======================================================
-    # CARRINHOS (MEMÓRIA)
+    # MOTORISTAS (EXTERNOS) ✅ usando FUNCIONARIOS (sem schema novo)
     # ======================================================
-    def salvar_carrinho(self, nome, capacidade, status="Disponível", id_externo="", carrinho_id=None):
-        status_norm = self._normalizar_status_carrinho(status)
+    def salvar_motorista(self, nome, cpf, telefone, motorista_id=None):
+        # salva dentro de funcionarios para manter FK de agendamentos compatível
+        return self.salvar_funcionario(
+            nome=nome,
+            telefone=telefone,
+            cargo="Motorista",
+            funcionario_id=motorista_id,
+            cpf=cpf,
+            tipo_acesso="Colaborador",
+        )
 
-        if carrinho_id:
-            carrinho = self.obter_carrinho(carrinho_id)
-            if not carrinho:
-                raise ValueError("Carrinho não encontrado.")
+    def listar_motoristas(self, termo=""):
+        # filtra por cargo contendo "motor"/"motoboy"/"moto"
+        todos = self.listar_funcionarios(termo=termo)
+        out = []
+        for f in todos:
+            cargo = str(f.get("cargo") or "").lower()
+            if any(k in cargo for k in ("motor", "motoboy", "moto")):
+                out.append(f)
+        return out
 
-            carrinho["nome"] = nome.strip()
-            carrinho["capacidade"] = int(capacidade)
-            carrinho["status"] = status_norm
-            if str(id_externo).strip():
-                carrinho["id_externo"] = str(id_externo).strip()
-            return carrinho
+    def obter_motorista(self, motorista_id):
+        return self.obter_funcionario(int(motorista_id))
 
-        novo_id = self._next_id("carrinho")
-        novo = {
-            "id": novo_id,
-            "id_externo": str(id_externo).strip() or f"CAR-{novo_id:02d}",
-            "nome": nome.strip(),
-            "capacidade": int(capacidade),
-            "status": status_norm,
-            "ativo": True,
-            "cadastro": datetime.now(),
-        }
-        self._carrinhos.append(novo)
-        return novo
+    def excluir_motorista(self, motorista_id):
+        return self.excluir_funcionario(int(motorista_id))
+
+    # ======================================================
+    # CARRINHOS
+    # ======================================================
+    def salvar_carrinho(self, nome, capacidade, status="Disponível", id_externo=None, carrinho_id=None):
+        return self.carrinhos_repo.salvar_carrinho(
+            nome=nome,
+            capacidade=capacidade,
+            status=status,
+            id_externo=id_externo,   # ✅ importante: nunca forçar ""
+            carrinho_id=carrinho_id,
+        )
 
     def listar_carrinhos(self, termo="", status=None):
-        termo = str(termo).strip().lower()
-        status_filtro = str(status).strip() if status else None
-        resultado = []
-
-        for c in self._carrinhos:
-            if not c.get("ativo", True):
-                continue
-
-            if status_filtro and status_filtro != "Todos" and c["status"] != status_filtro:
-                continue
-
-            texto = f'{c["nome"]} {c["id_externo"]}'.lower()
-            if termo and termo not in texto:
-                continue
-
-            resultado.append(c)
-
-        return resultado
+        return self.carrinhos_repo.listar_carrinhos(termo=termo, status=status)
 
     def obter_carrinho(self, carrinho_id):
-        for c in self._carrinhos:
-            if c["id"] == carrinho_id:
-                return c
-        return None
+        return self.carrinhos_repo.obter_carrinho(int(carrinho_id))
 
     def excluir_carrinho(self, carrinho_id):
-        self._carrinhos = [c for c in self._carrinhos if c["id"] != carrinho_id]
+        return self.carrinhos_repo.excluir_carrinho(int(carrinho_id))
 
     # ======================================================
-    # AGENDAMENTOS (MEMÓRIA)
+    # AGENDAMENTOS ✅ (aceita quantidade_carrinhos e carrinho_preferido_id)
     # ======================================================
     def salvar_agendamento(
         self,
         data,
         hora_inicio=None,
         hora_fim=None,
-        carrinho_id=None,
-        funcionario_id=None,
+        carrinho_id=None,          # compat antigo (vira "preferido")
+        funcionario_id=None,       # compat antigo
         local="",
         status="Agendado",
         observacao="",
@@ -542,146 +356,111 @@ class SistemaService:
         fim=None,
         motorista_id=None,
         obs=None,
+
+        # ✅ novos
+        quantidade_carrinhos=None,
+        qtd_carrinhos=None,
+        carrinho_preferido_id=None,
+
+        # ✅ tolerância a kwargs extras (não quebra UI)
+        **_,
     ):
         data_ref = self._parse_date(data)
         if not data_ref:
             raise ValueError("Data do agendamento inválida.")
 
         hora_ini = str(hora_inicio or inicio or "").strip()
-        hora_fim = str(hora_fim or fim or "").strip()
+        hora_fin = str(hora_fim or fim or "").strip()
         inicio_min = self._hora_para_minutos(hora_ini)
-        fim_min = self._hora_para_minutos(hora_fim)
+        fim_min = self._hora_para_minutos(hora_fin)
 
         if inicio_min is None or fim_min is None:
             raise ValueError("Horários inválidos.")
-
         if fim_min <= inicio_min:
             raise ValueError("Hora final deve ser maior que a inicial.")
 
-        carrinho_id = int(carrinho_id)
-        funcionario_id = int(funcionario_id or motorista_id)
+        # qtd (aceita os 2 nomes)
+        qtd = quantidade_carrinhos if quantidade_carrinhos is not None else qtd_carrinhos
+        try:
+            qtd = int(qtd or 1)
+        except Exception:
+            qtd = 1
+        if qtd <= 0:
+            raise ValueError("Quantidade de carrinhos inválida.")
 
-        carrinho = self.obter_carrinho(carrinho_id)
-        if not carrinho:
-            raise ValueError("Carrinho não encontrado.")
+        # carrinho preferido (aceita 2 nomes + compat carrinho_id)
+        prefer = carrinho_preferido_id if carrinho_preferido_id is not None else carrinho_id
+        prefer = int(prefer) if prefer not in (None, "", "None") else None
 
-        funcionario = self.obter_funcionario(funcionario_id)
-        if not funcionario:
-            raise ValueError("Funcionário não encontrado.")
+        # motorista opcional: UI manda motorista_id (funcionarios.id)
+        mot = motorista_id if motorista_id is not None else funcionario_id
+        mot = int(mot) if mot not in (None, "", "None") else None
 
-        status_norm = self._normalizar_status_agendamento(status)
         observacao_final = str(observacao or obs or "").strip()
 
-        if agendamento_id:
-            agendamento = self.obter_agendamento(agendamento_id)
-            if not agendamento:
-                raise ValueError("Agendamento não encontrado.")
+        return self.agendamentos_repo.salvar_agendamento(
+            data=data_ref,
+            inicio=hora_ini,
+            fim=hora_fin,
+            inicio_min=inicio_min,
+            fim_min=fim_min,
+            local=local,
+            qtd_carrinhos=qtd,
+            carrinho_preferido_id=prefer,
+            motorista_id=mot,
+            status=status,
+            obs=observacao_final,
+            agendamento_id=agendamento_id,
+        )
 
-            agendamento["data"] = data_ref
-            agendamento["inicio"] = hora_ini
-            agendamento["fim"] = hora_fim
-            agendamento["inicio_min"] = inicio_min
-            agendamento["fim_min"] = fim_min
-            agendamento["carrinho_id"] = carrinho_id
-            agendamento["motorista_id"] = funcionario_id
-            agendamento["local"] = str(local).strip()
-            agendamento["status"] = status_norm
-            agendamento["obs"] = observacao_final
-            return agendamento
+    def listar_agendamentos(self, data=None, data_inicial=None, data_final=None, incluir_cancelados=False):
+        data_ref = self._parse_date(data) if data else None
+        d_ini = self._parse_date(data_inicial) if data_inicial else None
+        d_fim = self._parse_date(data_final) if data_final else None
 
-        novo = {
-            "id": self._next_id("agendamento"),
-            "data": data_ref,
-            "inicio": hora_ini,
-            "fim": hora_fim,
-            "inicio_min": inicio_min,
-            "fim_min": fim_min,
-            "carrinho_id": carrinho_id,
-            "motorista_id": funcionario_id,
-            "local": str(local).strip(),
-            "status": status_norm,
-            "obs": observacao_final,
-            "cadastro": datetime.now(),
-        }
-        self._agendamentos.append(novo)
-        return novo
-
-    def listar_agendamentos(self, data=None):
-        data_filtro = self._parse_date(data) if data else None
-        resultado = []
-
-        for a in self._agendamentos:
-            if data_filtro and a["data"] != data_filtro:
-                continue
-
-            carrinho = self.obter_carrinho(a["carrinho_id"])
-            funcionario = self.obter_funcionario(a["motorista_id"])
-
-            resultado.append({
-                "id": a["id"],
-                "data": a["data"],
-                "inicio": a["inicio"],
-                "fim": a["fim"],
-                "inicio_min": a["inicio_min"],
-                "fim_min": a["fim_min"],
-                "carrinho_id": a["carrinho_id"],
-                "carrinho_nome": carrinho["nome"] if carrinho else "",
-                "carrinho_id_externo": carrinho["id_externo"] if carrinho else "",
-                "motorista_id": a["motorista_id"],
-                "motorista_nome": funcionario["nome"] if funcionario else "",
-                "local": a["local"],
-                "status": a["status"],
-                "obs": a["obs"],
-            })
-
-        resultado.sort(key=lambda x: (x["data"], x["inicio_min"]))
-        return resultado
+        return self.agendamentos_repo.listar_agendamentos(
+            data=data_ref,
+            data_inicial=d_ini,
+            data_final=d_fim,
+            incluir_cancelados=bool(incluir_cancelados),
+        )
 
     def obter_agendamento(self, agendamento_id):
-        for a in self._agendamentos:
-            if a["id"] == agendamento_id:
-                return a
-        return None
+        return self.agendamentos_repo.obter_agendamento(int(agendamento_id))
 
     def excluir_agendamento(self, agendamento_id):
-        self._agendamentos = [a for a in self._agendamentos if a["id"] != agendamento_id]
+        return self.agendamentos_repo.excluir_agendamento(int(agendamento_id))
 
     def remover_agendamento(self, agendamento_id):
-        self.excluir_agendamento(agendamento_id)
+        return self.excluir_agendamento(agendamento_id)
 
     # ======================================================
-    # FIDELIDADE (AGORA VIA MYSQL REPOSITORY)
+    # FIDELIDADE
     # ======================================================
     def calcular_pontos_rn05(self, tipo_cliente, valor_total):
-        try:
-            return int(self.fidelidade_repo.calcular_pontos_rn05(tipo_cliente, valor_total))
-        except Exception:
-            # fallback simples (não quebra UI)
-            valor = self._to_decimal(valor_total)
-            tipo = str(tipo_cliente).strip().lower()
-            if valor <= 0:
-                return 0
-            if tipo == "varejo":
-                return int(valor // Decimal("5"))
-            if tipo == "revendedor":
-                return int(valor // Decimal("50")) * 2
-            return 0
+        return int(self.fidelidade_repo.calcular_pontos_rn05(tipo_cliente, valor_total))
 
-    def movimentar_fidelidade(self, cliente_id, acao, pontos, motivo="", venda_id=None):
-        # fonte da verdade: MySQL
+    def movimentar_fidelidade(self, cliente_id, acao, pontos, motivo="", venda_id=None, usuario_id=None):
         return self.fidelidade_repo.movimentar_fidelidade(
             cliente_id=int(cliente_id),
             acao=str(acao),
             pontos=int(pontos),
             motivo=str(motivo),
             venda_id=int(venda_id) if venda_id is not None else None,
+            usuario_id=int(usuario_id) if usuario_id is not None else None,
         )
 
     def obter_extrato_fidelidade(self, cliente_id):
         return self.fidelidade_repo.obter_extrato_fidelidade(int(cliente_id))
 
     # ======================================================
-    # VENDAS (MEMÓRIA)
+    # FORMAS DE PAGAMENTO
+    # ======================================================
+    def listar_formas_pagamento(self) -> List[Dict[str, Any]]:
+        return self.formas_repo.listar_formas()
+
+    # ======================================================
+    # VENDAS ✅
     # ======================================================
     def registrar_venda(
         self,
@@ -694,91 +473,40 @@ class SistemaService:
         taxa_entrega=0,
         observacao="",
         data_venda=None,
+        usuario_id=None,
     ):
         tipo = str(tipo).strip().upper()
         if tipo not in ("BALCAO", "REVENDA", "DELIVERY"):
             raise ValueError("Tipo de venda inválido.")
-
         if not itens:
             raise ValueError("A venda precisa ter ao menos 1 item.")
 
-        desconto = self._to_decimal(desconto)
-        taxa_entrega = self._to_decimal(taxa_entrega)
+        desconto_dec = self._to_decimal(desconto)
+        taxa_entrega_dec = self._to_decimal(taxa_entrega)
         data_ref = self._parse_datetime(data_venda) if data_venda else datetime.now()
 
-        itens_normalizados = []
-        subtotal = Decimal("0")
+        venda = self.vendas_repo.registrar_venda(
+            tipo=tipo,
+            itens=itens,
+            forma_pagamento=forma_pagamento,
+            cliente_id=int(cliente_id) if cliente_id else None,
+            revendedor_id=int(revendedor_id) if revendedor_id else None,
+            desconto=desconto_dec,
+            taxa_entrega=taxa_entrega_dec,
+            observacao=observacao,
+            data_venda=data_ref,
+            status="FINALIZADA",
+        )
 
-        # 1) validar produtos e estoque
-        for item in itens:
-            produto_id = int(item["produto_id"])
-            qtd = int(item["qtd"])
-
-            if qtd <= 0:
-                raise ValueError("Quantidade inválida.")
-
-            produto = self.obter_produto(produto_id)
-            if not produto:
-                raise ValueError(f"Produto {produto_id} não encontrado.")
-
-            estoque_atual = self._estoque.get(produto_id, 0)
-            if estoque_atual < qtd:
-                raise ValueError(f"Estoque insuficiente para {produto['nome']}.")
-
-            unitario = self._to_decimal(produto["preco"])
-            total_item = unitario * qtd
-
-            itens_normalizados.append({
-                "produto_id": produto_id,
-                "produto_nome": produto["nome"],
-                "categoria": produto["categoria"],
-                "qtd": qtd,
-                "unitario": unitario,
-                "total": total_item,
-            })
-            subtotal += total_item
-
-        if desconto < 0:
-            desconto = Decimal("0")
-        if desconto > subtotal:
-            desconto = subtotal
-
-        if taxa_entrega < 0:
-            taxa_entrega = Decimal("0")
-
-        total_produtos = subtotal - desconto
-        total = total_produtos + taxa_entrega
-
-        # 2) baixar estoque
-        for item in itens_normalizados:
-            self.ajustar_estoque(item["produto_id"], -item["qtd"])
-
-        venda = {
-            "id": self._next_id("venda"),
-            "tipo": tipo,
-            "data": data_ref,
-            "cliente_id": cliente_id,
-            "revendedor_id": revendedor_id,
-            "forma_pagamento": forma_pagamento,
-            "observacao": observacao.strip(),
-            "subtotal": subtotal,
-            "desconto": desconto,
-            "taxa_entrega": taxa_entrega,
-            "total": total,
-            "itens": itens_normalizados,
-        }
-        self._vendas.append(venda)
-
-        # 3) aplicar fidelidade automática
-        cliente_para_pontos = revendedor_id if tipo == "REVENDA" else cliente_id
-
+        cliente_para_pontos = venda.get("revendedor_id") if tipo == "REVENDA" else venda.get("cliente_id")
         if cliente_para_pontos:
             cliente = self.obter_cliente(cliente_para_pontos)
             if cliente:
-                # registra última compra no banco
                 self._atualizar_ultima_compra_db(cliente_para_pontos, data_ref)
+                total_produtos = self._to_decimal(venda.get("subtotal", 0)) - self._to_decimal(venda.get("desconto", 0))
+                if total_produtos < 0:
+                    total_produtos = Decimal("0")
 
-                # fidelidade usa o valor dos produtos (sem taxa)
                 pontos = self.calcular_pontos_rn05(cliente.get("tipo_cliente", "Varejo"), total_produtos)
                 if pontos > 0:
                     self.movimentar_fidelidade(
@@ -787,31 +515,19 @@ class SistemaService:
                         pontos=pontos,
                         motivo=f"Crédito automático RN05 - venda {tipo}",
                         venda_id=venda["id"],
+                        usuario_id=usuario_id,
                     )
 
         return venda
 
     def listar_vendas(self, tipo=None, data_inicial=None, data_final=None):
-        resultado = []
-
         dt_ini = self._parse_datetime(data_inicial) if data_inicial else None
         dt_fim = self._parse_datetime(data_final) if data_final else None
-
-        for v in self._vendas:
-            if tipo and v["tipo"] != str(tipo).strip().upper():
-                continue
-
-            if dt_ini and v["data"] < dt_ini:
-                continue
-            if dt_fim and v["data"] > dt_fim:
-                continue
-
-            resultado.append(v)
-
-        return resultado
+        tipo_norm = str(tipo).strip().upper() if tipo else None
+        return self.vendas_repo.listar_vendas(tipo=tipo_norm, data_inicial=dt_ini, data_final=dt_fim, incluir_itens=True)
 
     # ======================================================
-    # FECHAMENTO (MEMÓRIA)
+    # FECHAMENTO ✅
     # ======================================================
     def salvar_fechamento(
         self,
@@ -826,88 +542,26 @@ class SistemaService:
         caixa_inicial=0,
         contado_caixa=0,
         observacao="",
+        responsavel_id=None,
     ):
         data_ref = self._parse_date(data_fechamento)
         if not data_ref:
             raise ValueError("Data do fechamento inválida.")
 
-        vendas_brutas_dec = self._to_decimal(vendas_brutas)
-        descontos_dec = self._to_decimal(descontos)
-        cancelamentos_dec = self._to_decimal(cancelamentos)
-
-        dinheiro_dec = self._to_decimal(dinheiro)
-        pix_dec = self._to_decimal(pix)
-        cartao_dec = self._to_decimal(cartao)
-
-        sangria_dec = self._to_decimal(sangria)
-        caixa_inicial_dec = self._to_decimal(caixa_inicial)
-        contado_caixa_dec = self._to_decimal(contado_caixa)
-
-        total_liquido = vendas_brutas_dec - descontos_dec - cancelamentos_dec
-        if total_liquido < 0:
-            total_liquido = Decimal("0")
-
-        total_recebido = dinheiro_dec + pix_dec + cartao_dec
-        previsto_em_caixa = caixa_inicial_dec + dinheiro_dec - sangria_dec
-        diferenca = contado_caixa_dec - previsto_em_caixa
-
-        fechamento_existente = self.obter_fechamento_por_data(data_ref)
-
-        if fechamento_existente:
-            fechamento_existente["vendas_brutas"] = vendas_brutas_dec
-            fechamento_existente["descontos"] = descontos_dec
-            fechamento_existente["cancelamentos"] = cancelamentos_dec
-            fechamento_existente["total_liquido"] = total_liquido
-            fechamento_existente["dinheiro"] = dinheiro_dec
-            fechamento_existente["pix"] = pix_dec
-            fechamento_existente["cartao"] = cartao_dec
-            fechamento_existente["total_recebido"] = total_recebido
-            fechamento_existente["sangria"] = sangria_dec
-            fechamento_existente["caixa_inicial"] = caixa_inicial_dec
-            fechamento_existente["contado_caixa"] = contado_caixa_dec
-            fechamento_existente["previsto_em_caixa"] = previsto_em_caixa
-            fechamento_existente["diferenca"] = diferenca
-            fechamento_existente["observacao"] = str(observacao).strip()
-            fechamento_existente["atualizado_em"] = datetime.now()
-            return fechamento_existente
-
-        novo = {
-            "id": self._next_id("fechamento"),
-            "data": data_ref,
-            "vendas_brutas": vendas_brutas_dec,
-            "descontos": descontos_dec,
-            "cancelamentos": cancelamentos_dec,
-            "total_liquido": total_liquido,
-            "dinheiro": dinheiro_dec,
-            "pix": pix_dec,
-            "cartao": cartao_dec,
-            "total_recebido": total_recebido,
-            "sangria": sangria_dec,
-            "caixa_inicial": caixa_inicial_dec,
-            "contado_caixa": contado_caixa_dec,
-            "previsto_em_caixa": previsto_em_caixa,
-            "diferenca": diferenca,
-            "observacao": str(observacao).strip(),
-            "criado_em": datetime.now(),
-            "atualizado_em": None,
-        }
-        self._fechamentos.append(novo)
-        return novo
+        fechamento = self.fechamentos_repo.salvar_fechamento(
+            data=data_ref,
+            caixa_inicial=self._to_decimal(caixa_inicial),
+            sangria=self._to_decimal(sangria),
+            contado_caixa=self._to_decimal(contado_caixa),
+            observacao=str(observacao).strip(),
+            responsavel_id=int(responsavel_id) if responsavel_id else None,
+        )
+        return fechamento
 
     def listar_fechamentos(self, data_inicial=None, data_final=None):
-        dt_ini = self._parse_date(data_inicial) if data_inicial else None
-        dt_fim = self._parse_date(data_final) if data_final else None
-
-        resultado = []
-        for f in self._fechamentos:
-            if dt_ini and f["data"] < dt_ini:
-                continue
-            if dt_fim and f["data"] > dt_fim:
-                continue
-            resultado.append(f)
-
-        resultado.sort(key=lambda x: x["data"], reverse=True)
-        return resultado
+        d_ini = self._parse_date(data_inicial) if data_inicial else None
+        d_fim = self._parse_date(data_final) if data_final else None
+        return self.fechamentos_repo.listar_fechamentos(data_inicial=d_ini, data_final=d_fim)
 
     def listar_fechamento(self, data_inicial=None, data_final=None):
         return self.listar_fechamentos(data_inicial=data_inicial, data_final=data_final)
@@ -916,61 +570,44 @@ class SistemaService:
         dia = self._parse_date(data_ref)
         if not dia:
             return None
-
-        for f in self._fechamentos:
-            if f["data"] == dia:
-                return f
-        return None
+        return self.fechamentos_repo.obter_por_data(dia)
 
     def resumo_fechamento(self, data_ref=None):
         base = self._parse_datetime(data_ref) if data_ref else datetime.now()
         dia = base.date()
-
-        vendas_dia = [v for v in self._vendas if v["data"].date() == dia]
-
-        vendas_brutas = sum((v["subtotal"] for v in vendas_dia), Decimal("0"))
-        descontos = sum((v["desconto"] for v in vendas_dia), Decimal("0"))
-        taxas_entrega = sum((v.get("taxa_entrega", Decimal("0")) for v in vendas_dia), Decimal("0"))
-        cancelamentos = Decimal("0")
-        liquido = sum((v["total"] for v in vendas_dia), Decimal("0"))
-
-        dinheiro = sum((v["total"] for v in vendas_dia if v["forma_pagamento"] == "Dinheiro"), Decimal("0"))
-        pix = sum((v["total"] for v in vendas_dia if v["forma_pagamento"] == "Pix"), Decimal("0"))
-        cartao = sum((v["total"] for v in vendas_dia if v["forma_pagamento"] == "Cartão"), Decimal("0"))
-        prazo = sum((v["total"] for v in vendas_dia if v["forma_pagamento"] == "Prazo"), Decimal("0"))
-
-        return {
-            "data": dia,
-            "vendas_brutas": vendas_brutas,
-            "descontos": descontos,
-            "taxas_entrega": taxas_entrega,
-            "cancelamentos": cancelamentos,
-            "total_liquido": liquido,
-            "dinheiro": dinheiro,
-            "pix": pix,
-            "cartao": cartao,
-            "prazo": prazo,
-            "qtd_vendas": len(vendas_dia),
-        }
+        resumo = self.fechamentos_repo.resumo_por_data(dia)
+        if resumo:
+            return resumo
+        return self.vendas_repo.resumo_por_dia(dia)
 
     # ======================================================
-    # RELATÓRIOS (MEMÓRIA)
+    # RELATÓRIOS
     # ======================================================
     def dados_relatorio(self, mes, ano, tipo="Todos", categoria="Todos"):
         mes = int(mes)
         ano = int(ano)
 
+        dt_ini = datetime(ano, mes, 1)
+        if mes == 12:
+            dt_fim = datetime(ano + 1, 1, 1) - timedelta(seconds=1)
+        else:
+            dt_fim = datetime(ano, mes + 1, 1) - timedelta(seconds=1)
+
+        vendas = self.vendas_repo.listar_vendas(
+            tipo=None,
+            data_inicial=dt_ini,
+            data_final=dt_fim,
+            incluir_itens=True,
+        )
+
         vendas_filtradas = []
         faturamento = Decimal("0")
         qtd_vendas = 0
-        serie_por_dia = {}
-        produtos_vendidos = {}
+        serie_por_dia: Dict[int, Decimal] = {}
+        produtos_vendidos: Dict[str, int] = {}
         taxas_entrega = Decimal("0")
 
-        for v in self._vendas:
-            if v["data"].month != mes or v["data"].year != ano:
-                continue
-
+        for v in vendas:
             if tipo != "Todos":
                 tipo_map = {
                     "Balcão": "BALCAO",
@@ -984,27 +621,28 @@ class SistemaService:
             valor_considerado = Decimal("0")
             itens_considerados = []
 
-            for item in v["itens"]:
-                if categoria != "Todos" and item["categoria"] != categoria:
+            for item in v.get("itens", []):
+                if categoria != "Todos" and item.get("categoria") != categoria:
                     continue
 
-                valor_considerado += item["total"]
+                valor_considerado += self._to_decimal(item.get("total", 0))
                 itens_considerados.append(item)
 
-                produtos_vendidos[item["produto_nome"]] = produtos_vendidos.get(item["produto_nome"], 0) + item["qtd"]
+                nome_prod = item.get("produto_nome") or item.get("nome") or ""
+                produtos_vendidos[nome_prod] = produtos_vendidos.get(nome_prod, 0) + int(item.get("qtd", 0))
 
             if categoria != "Todos" and not itens_considerados:
                 continue
 
             if categoria == "Todos":
-                valor_considerado = v["total"]
-                taxas_entrega += v.get("taxa_entrega", Decimal("0"))
+                valor_considerado = self._to_decimal(v.get("total", 0))
+                taxas_entrega += self._to_decimal(v.get("taxa_entrega", 0))
 
             vendas_filtradas.append(v)
             faturamento += valor_considerado
             qtd_vendas += 1
 
-            dia = v["data"].day
+            dia = v["data"].day if isinstance(v["data"], datetime) else self._parse_datetime(v["data"]).day
             serie_por_dia[dia] = serie_por_dia.get(dia, Decimal("0")) + valor_considerado
 
         ticket_medio = Decimal("0")

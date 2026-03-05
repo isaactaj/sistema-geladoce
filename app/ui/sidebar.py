@@ -1,6 +1,7 @@
 import customtkinter as ctk
 from PIL import Image
 import os
+from typing import Optional
 
 # Popup elegante (se não existir, cai no tkinter.messagebox)
 try:
@@ -121,14 +122,23 @@ class MenuLateral(ctk.CTkFrame):
     """
     Menu lateral fixo (não cresce no eixo X).
     Rodapé:
-      - virou botão clicável
-      - mostra usuário atual (nome + tipo)
+      - card clicável (em vez de botão multi-linha)
+      - texto centralizado
+      - nome em destaque
+      - tipo menor e mais fino
       - chama callback para trocar usuário/logout
     """
     LARGURA_MENU = 260
     ROTAS_ADMIN = {"relatorios", "funcionarios"}  # rotas restritas
 
-    def __init__(self, master, ao_navegar, assets_dir="assets", usuario_logado=None):
+    def __init__(
+        self,
+        master,
+        ao_navegar,
+        assets_dir="assets",
+        usuario_logado=None,
+        sistema=None,  # ✅ opcional: reusa do master se existir
+    ):
         super().__init__(master, width=self.LARGURA_MENU, fg_color=COR_PAINEL)
 
         # trava largura (para NÃO ficar responsivo no eixo X)
@@ -138,6 +148,9 @@ class MenuLateral(ctk.CTkFrame):
         self.ao_navegar = ao_navegar
         self.assets_dir = assets_dir
 
+        # ✅ não cria service/repo aqui; apenas reusa se vier do master
+        self.sistema = getattr(master, "sistema", None) or sistema
+
         self.botoes_simples = {}
         self.icones = self._carregar_icones()
 
@@ -145,6 +158,7 @@ class MenuLateral(ctk.CTkFrame):
         self._usuario_logado = usuario_logado or {}
         self._is_admin = False
 
+        # layout geral
         self.grid_columnconfigure(0, weight=1, minsize=self.LARGURA_MENU)
         self.grid_rowconfigure(99, weight=1)  # empurra rodapé para baixo
 
@@ -202,14 +216,14 @@ class MenuLateral(ctk.CTkFrame):
         )
         self.adm.grid(row=9, column=0, sticky="ew")
 
-        # rodapé (agora botão)
+        # rodapé (card clicável)
         self._criar_rodape_usuario()
 
         # aplica usuário/permissões iniciais
         self.set_usuario_logado(self._usuario_logado)
 
     # ------------------------
-    # Icones
+    # Ícones
     # ------------------------
     def _carregar_icones(self):
         tamanho = (18, 18)
@@ -217,7 +231,10 @@ class MenuLateral(ctk.CTkFrame):
         def carregar(nome_arquivo):
             caminho = os.path.join(self.assets_dir, nome_arquivo)
             if os.path.exists(caminho):
-                return ctk.CTkImage(light_image=Image.open(caminho), size=tamanho)
+                try:
+                    return ctk.CTkImage(light_image=Image.open(caminho), size=tamanho)
+                except Exception:
+                    return None
             return None
 
         return {
@@ -234,41 +251,102 @@ class MenuLateral(ctk.CTkFrame):
     # Logo
     # -------------------------
     def _carregar_logo(self):
+        """
+        Mantém a row=1, mas centraliza no eixo X alinhando com as seções.
+        Para isso:
+        - usa sticky="ew" e o mesmo padx=20 dos botões
+        - label com anchor="center"
+        """
         logo_path = os.path.join(self.assets_dir, "logo_geladoce.png")
+
         if os.path.exists(logo_path):
-            self.logo_img = ctk.CTkImage(light_image=Image.open(logo_path), size=(160, 80))
-            ctk.CTkLabel(self, image=self.logo_img, text="").grid(
-                row=1, column=0, padx=20, pady=(0, 15), sticky="w"
-            )
+            self.logo_img = ctk.CTkImage(light_image=Image.open(logo_path), size=(180, 80))
+            self.logo_label = ctk.CTkLabel(self, image=self.logo_img, text="", anchor="center")
+            self.logo_label.grid(row=1, column=0, padx=20, pady=(0, 15), sticky="ew")
         else:
-            ctk.CTkLabel(
+            self.logo_label = ctk.CTkLabel(
                 self,
                 text="Geladoce",
                 font=ctk.CTkFont(family=FONTE, size=18, weight="bold"),
                 text_color=COR_TEXTO,
-            ).grid(row=1, column=0, padx=20, pady=(0, 15), sticky="w")
+                anchor="center",
+            )
+            self.logo_label.grid(row=1, column=0, padx=20, pady=(0, 15), sticky="ew")
 
     # -------------------------
-    # Rodapé usuário (BOTÃO)
+    # Rodapé usuário (CARD clicável)
     # -------------------------
     def _criar_rodape_usuario(self):
+        """
+        Card com:
+        - nome centralizado (maior/mais forte)
+        - tipo centralizado (menor e mais fino)
+        - hover + clique chamando callback do main.py
+        """
         self.frame_usuario = ctk.CTkFrame(self, fg_color="transparent")
         self.frame_usuario.grid(row=100, column=0, sticky="ew", padx=16, pady=(10, 16))
         self.frame_usuario.grid_columnconfigure(0, weight=1)
 
-        # botão do usuário: 2 linhas (nome + tipo) para caber bem na largura fixa
-        self.btn_usuario = ctk.CTkButton(
+        # Card
+        self.usuario_card = ctk.CTkFrame(
             self.frame_usuario,
-            text="👤 Não logado\n",
-            height=50,
-            fg_color="transparent",
-            hover_color=COR_HOVER,
-            text_color=COR_TEXTO,
-            anchor="w",
-            font=ctk.CTkFont(family=FONTE, size=12, weight="bold"),
-            command=self._ao_clicar_usuario,
+            fg_color=COR_BOTAO,
+            corner_radius=12,
+            border_width=1,
+            border_color=COR_HOVER,
         )
-        self.btn_usuario.grid(row=0, column=0, sticky="ew")
+        self.usuario_card.grid(row=0, column=0, sticky="ew")
+        self.usuario_card.grid_columnconfigure(0, weight=1)
+
+        # Conteúdo (centralizado)
+        self.usuario_inner = ctk.CTkFrame(self.usuario_card, fg_color="transparent")
+        self.usuario_inner.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        self.usuario_inner.grid_columnconfigure(0, weight=1)
+
+        self.lbl_usuario_nome = ctk.CTkLabel(
+            self.usuario_inner,
+            text="👤 Não logado",
+            text_color=COR_TEXTO,
+            font=ctk.CTkFont(family=FONTE, size=13, weight="bold"),
+            anchor="center",
+            justify="center",
+        )
+        self.lbl_usuario_nome.grid(row=0, column=0, sticky="ew")
+
+        self.lbl_usuario_tipo = ctk.CTkLabel(
+            self.usuario_inner,
+            text="",
+            text_color=COR_TEXTO,
+            font=ctk.CTkFont(family=FONTE, size=11, weight="normal"),
+            anchor="center",
+            justify="center",
+        )
+        self.lbl_usuario_tipo.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+
+        # bindings (clique + hover) em todas as partes
+        self._bind_click_hover(self.usuario_card)
+        self._bind_click_hover(self.usuario_inner)
+        self._bind_click_hover(self.lbl_usuario_nome)
+        self._bind_click_hover(self.lbl_usuario_tipo)
+
+        # cursor de “mão” quando possível
+        for w in (self.usuario_card, self.usuario_inner, self.lbl_usuario_nome, self.lbl_usuario_tipo):
+            try:
+                w.configure(cursor="hand2")
+            except Exception:
+                pass
+
+    def _bind_click_hover(self, widget):
+        widget.bind("<Button-1>", lambda e: self._ao_clicar_usuario())
+        widget.bind("<Enter>", lambda e: self._hover_usuario(True))
+        widget.bind("<Leave>", lambda e: self._hover_usuario(False))
+
+    def _hover_usuario(self, hover: bool):
+        # hover suave no card
+        try:
+            self.usuario_card.configure(fg_color=COR_HOVER if hover else COR_BOTAO)
+        except Exception:
+            pass
 
     def configurar_acao_usuario(self, callback):
         """main.py define o que acontece ao clicar no usuário."""
@@ -287,15 +365,18 @@ class MenuLateral(ctk.CTkFrame):
         {"nome": "...", "tipo_acesso": "Administrador"|"Colaborador"}
         """
         self._usuario_logado = usuario or {}
+
         nome = (self._usuario_logado.get("nome") or self._usuario_logado.get("login") or "Não logado").strip()
 
         tipo_raw = str(self._usuario_logado.get("tipo_acesso", "")).strip()
         tipo = "Administrador" if tipo_raw.lower() == "administrador" else "Colaborador"
-
         self._is_admin = (tipo == "Administrador")
 
-        if hasattr(self, "btn_usuario"):
-            self.btn_usuario.configure(text=f"👤 {nome}\n{tipo}")
+        # Atualiza UI do rodapé (centralizada, com fontes diferentes)
+        if hasattr(self, "lbl_usuario_nome"):
+            self.lbl_usuario_nome.configure(text=f"👤 {nome}")
+        if hasattr(self, "lbl_usuario_tipo"):
+            self.lbl_usuario_tipo.configure(text=tipo)
 
         self._aplicar_permissoes()
 
@@ -310,11 +391,12 @@ class MenuLateral(ctk.CTkFrame):
 
     # compatibilidade com chamadas antigas
     def atualizar_usuario(self, nome: str):
-        # mantém, mas agora só atualiza o nome e mantém tipo atual
         tipo_raw = str(self._usuario_logado.get("tipo_acesso", "")).strip()
         tipo = "Administrador" if tipo_raw.lower() == "administrador" else "Colaborador"
-        if hasattr(self, "btn_usuario"):
-            self.btn_usuario.configure(text=f"👤 {str(nome).strip()}\n{tipo}")
+        if hasattr(self, "lbl_usuario_nome"):
+            self.lbl_usuario_nome.configure(text=f"👤 {str(nome).strip()}")
+        if hasattr(self, "lbl_usuario_tipo"):
+            self.lbl_usuario_tipo.configure(text=tipo)
 
     # -------------------------
     # Botão simples

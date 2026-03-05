@@ -8,12 +8,15 @@ from app.config import theme
 from app.ui.sidebar import MenuLateral
 from app.core.navigation import Navigation
 from app.pages.login.page import TelaLogin
+
 from app.database.connection import (
     criar_banco_se_nao_existir,
     criar_tabelas_se_nao_existirem,
     testar_conexao,
 )
-from app.database.repositories.usuarios_repository import UsuariosRepository
+
+# ✅ Agora o main depende do núcleo central, não do repo direto
+from app.core.sistema import SistemaService
 
 
 MODO_DESENVOLVIMENTO_SEM_LOGIN = False
@@ -30,17 +33,20 @@ class SistemaGeladoce(ctk.CTk):
 
         self._configurar_icone()
 
+        # ✅ Núcleo do sistema (fonte da verdade)
+        self.sistema = SistemaService()
+
         self.usuario_logado = None
-        self.usuarios_repo = UsuariosRepository()
 
         self.menu = None
         self.area = None
         self.tela_login = None
 
-        # Bootstrap do usuário admin padrão
+        # ✅ Admin padrão deve ser garantido DEPOIS do bootstrap do banco (feito antes no main())
         try:
-            self.usuarios_repo.garantir_admin_padrao()
+            self.sistema.garantir_admin_padrao()
         except Exception as e:
+            # não impede abrir o sistema, mas deixa rastreável
             print(f"Aviso ao preparar usuário padrão: {e}")
 
         if MODO_DESENVOLVIMENTO_SEM_LOGIN:
@@ -48,6 +54,7 @@ class SistemaGeladoce(ctk.CTk):
                 "id": 0,
                 "nome": "Modo Desenvolvimento",
                 "login": "dev",
+                "cpf": "00000000000",
                 "tipo_acesso": "Administrador",
             }
             self.abrir_sistema(usuario_dev)
@@ -91,11 +98,12 @@ class SistemaGeladoce(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=0)
 
+        # ✅ Callbacks passam pelo SistemaService (contrato central)
         self.tela_login = TelaLogin(
             self,
-            autenticar_callback=self.usuarios_repo.autenticar,
-            criar_usuario_callback=self.usuarios_repo.criar_usuario,
-            alterar_senha_callback=self.usuarios_repo.alterar_senha,
+            autenticar_callback=self.sistema.autenticar,
+            criar_usuario_callback=self.sistema.criar_usuario,
+            alterar_senha_callback=self.sistema.alterar_senha,
             on_login_success=self._ao_login_sucesso,
             on_exit=self.destroy,
         )
@@ -131,13 +139,25 @@ class SistemaGeladoce(ctk.CTk):
         )
         self.area.grid(row=0, column=1, sticky="nsew")
 
-        # Garante atualização explícita do usuário no sidebar
+        # ✅ Injeta o service no menu e na área sem quebrar __init__ existente
+        # (assim páginas conseguem acessar self.master.sistema / self.sistema)
+        try:
+            setattr(self.menu, "sistema", self.sistema)
+        except Exception:
+            pass
+
+        try:
+            setattr(self.area, "sistema", self.sistema)
+        except Exception:
+            pass
+
+        # Atualiza usuário no sidebar
         if hasattr(self.menu, "set_usuario_logado"):
             self.menu.set_usuario_logado(self.usuario_logado)
         elif hasattr(self.menu, "atualizar_usuario"):
             self.menu.atualizar_usuario(self.usuario_logado.get("nome", "Usuário"))
 
-        # Garante atualização explícita do usuário na navegação
+        # Atualiza usuário na navegação
         if hasattr(self.area, "set_usuario_logado"):
             self.area.set_usuario_logado(self.usuario_logado)
 
@@ -175,9 +195,6 @@ class SistemaGeladoce(ctk.CTk):
         """
         Navega para a rota informada e só marca como ativa
         se a navegação realmente aconteceu.
-
-        Isso evita, por exemplo, marcar "Administração" no menu
-        quando um colaborador tenta abrir uma rota bloqueada.
         """
         if self.area is None:
             return
@@ -191,10 +208,8 @@ class SistemaGeladoce(ctk.CTk):
         if self.menu is None or not hasattr(self.menu, "marcar_ativo"):
             return
 
-        # Só marca a rota nova se ela realmente foi aberta
         if rota_atual == chave:
             self.menu.marcar_ativo(chave)
-        # Se foi bloqueada, mantém o item anterior marcado
         elif rota_atual:
             self.menu.marcar_ativo(rota_atual)
         elif rota_anterior:
@@ -204,9 +219,9 @@ class SistemaGeladoce(ctk.CTk):
 def iniciar_banco() -> bool:
     """
     Inicializa o banco antes de abrir a interface.
-    1. Garante que o banco exista.
-    2. Garante que as tabelas existam.
-    3. Testa a conexão.
+    1) Garante que o banco exista.
+    2) Garante schema/tabelas/views/seeds.
+    3) Testa conexão.
     """
     try:
         criar_banco_se_nao_existir()
@@ -224,11 +239,40 @@ def iniciar_banco() -> bool:
         return False
 
 
+def _mostrar_erro_banco_e_sair():
+    """
+    Mostra popup amigável e encerra.
+    Útil porque CTkMessagebox precisa de um root.
+    """
+    root = ctk.CTk()
+    root.withdraw()
+
+    CTkMessagebox(
+        title="Banco de dados indisponível",
+        message=(
+            "Não foi possível iniciar o sistema porque a conexão com o MySQL falhou.\n\n"
+            "Checklist rápido:\n"
+            "• MySQL está ligado (WAMP/XAMPP)?\n"
+            "• DB_HOST/DB_PORT/DB_USER/DB_PASSWORD corretos em app/database/config.py\n"
+            f"• Banco '{theme.__dict__.get('DB_NAME', 'geladoce')}' existe ou pode ser criado\n\n"
+            "Depois de corrigir, abra o sistema novamente."
+        ),
+        icon="cancel",
+        option_1="OK",
+    )
+
+    try:
+        root.destroy()
+    except Exception:
+        pass
+
+
 def main():
     banco_ok = iniciar_banco()
 
     if not banco_ok:
         print("O sistema não foi iniciado porque a conexão com o banco falhou.")
+        _mostrar_erro_banco_e_sair()
         return
 
     app = SistemaGeladoce()
