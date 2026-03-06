@@ -1,7 +1,7 @@
 ﻿import calendar
 import json
 import threading
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from urllib.error import URLError
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
@@ -9,21 +9,24 @@ from zoneinfo import ZoneInfo
 import customtkinter as ctk
 
 from app.config import theme
+from app.core.sistema import SistemaService
 
 
 class PaginaInicio(ctk.CTkFrame):
-    def __init__(self, master):
+    def __init__(self, master, sistema: SistemaService | None = None, usuario_logado: dict | None = None):
         super().__init__(master, fg_color=theme.COR_FUNDO)
 
         # =========================================================
         # Layout da página
-        # - Coluna esquerda fixa (relógio + clima)
-        # - Coluna direita responsiva (calendário)
         # =========================================================
         self.grid_columnconfigure(0, weight=0)   # fixa
         self.grid_columnconfigure(1, weight=1)   # responsiva
         self.grid_rowconfigure(0, weight=0)
         self.grid_rowconfigure(1, weight=1)
+
+        # ✅ Reusa o núcleo do app (fonte da verdade)
+        self.sistema = getattr(master, "sistema", None) or sistema or SistemaService()
+        self.usuario_logado = usuario_logado or {}
 
         # Estado geral
         self.tz_belem = ZoneInfo("America/Belem")
@@ -32,7 +35,10 @@ class PaginaInicio(ctk.CTkFrame):
         self.cal_ano = hoje.year
         self.cal_mes = hoje.month
         self.data_selecionada = hoje
-        self.servicos = self._mock_servicos()
+
+        # ✅ Agora vem do banco (agendamentos)
+        self.servicos = {}
+        self._carregar_servicos_do_mes()
 
         # Tooltip / hover
         self.tooltip = None
@@ -56,11 +62,9 @@ class PaginaInicio(ctk.CTkFrame):
         # =========================================================
         # Fonts reutilizáveis
         # =========================================================
-        # Boas-vindas
         self.font_titulo_inicio = ctk.CTkFont(family=theme.FONTE, size=34, weight="bold")
         self.font_subtitulo_inicio = ctk.CTkFont(family=theme.FONTE, size=14, weight="bold")
 
-        # Relógio / Clima (fixos)
         self.font_titulo_relogio = ctk.CTkFont(family=theme.FONTE, size=16, weight="bold")
         self.font_hora = ctk.CTkFont(family=theme.FONTE, size=38, weight="bold")
         self.font_data = ctk.CTkFont(family=theme.FONTE, size=13)
@@ -70,7 +74,6 @@ class PaginaInicio(ctk.CTkFrame):
         self.font_clima = ctk.CTkFont(family=theme.FONTE, size=13, weight="bold")
         self.font_temp_atualizada = ctk.CTkFont(family=theme.FONTE, size=11)
 
-        # Calendário (responsivas)
         self.font_titulo_calendario = ctk.CTkFont(family=theme.FONTE, size=18, weight="bold")
         self.font_mes_ano = ctk.CTkFont(family=theme.FONTE, size=14, weight="bold")
         self.font_dia_semana = ctk.CTkFont(family=theme.FONTE, size=11, weight="bold")
@@ -88,6 +91,79 @@ class PaginaInicio(ctk.CTkFrame):
 
         # Bind para fechar tooltip clicando fora
         self.after(200, self._registrar_bind_root_click)
+
+    # =========================================================
+    # DB -> serviços reais
+    # =========================================================
+    def _carregar_servicos_do_mes(self):
+        """
+        Carrega do MySQL os agendamentos (serviços) do mês atual e cria o mapa:
+          { 'YYYY-MM-DD': [ 'linha...', 'linha...' ] }
+        """
+        self.servicos = {}
+        try:
+            primeiro = date(self.cal_ano, self.cal_mes, 1)
+            ultimo_dia = calendar.monthrange(self.cal_ano, self.cal_mes)[1]
+            ultimo = date(self.cal_ano, self.cal_mes, ultimo_dia)
+
+            ags = self.sistema.listar_agendamentos(
+                data_inicial=primeiro,
+                data_final=ultimo,
+                incluir_cancelados=False,
+            )
+
+            # organiza por dia, ordenando por inicio_min
+            tmp = {}  # key -> list[(inicio_min, texto)]
+            for a in ags:
+                d = a.get("data")
+                if not isinstance(d, date):
+                    continue
+                key = d.isoformat()
+
+                inicio = str(a.get("inicio", "")).strip()
+                fim = str(a.get("fim", "")).strip()
+                inicio_min = int(a.get("inicio_min") or 0)
+
+                carr = (a.get("carrinho_nome") or "").strip()
+                carr_idext = (a.get("carrinho_id_externo") or "").strip()
+                mot = (a.get("motorista_nome") or "").strip()
+                local = (a.get("local") or "").strip()
+                status = (a.get("status") or "Agendado").strip()
+
+                # texto humano pro tooltip
+                # Ex: "09:00–11:00 • CAR-01 - Carrinho A • João • Praça • Confirmado"
+                carr_txt = carr
+                if carr_idext:
+                    carr_txt = f"{carr_idext} - {carr}" if carr else carr_idext
+
+                partes = []
+                if inicio and fim:
+                    partes.append(f"{inicio}–{fim}")
+                elif inicio:
+                    partes.append(inicio)
+
+                if carr_txt:
+                    partes.append(carr_txt)
+                if mot:
+                    partes.append(mot)
+                if local:
+                    partes.append(local)
+                if status and status != "Agendado":
+                    partes.append(status)
+
+                linha = " • ".join(partes).strip()
+                if not linha:
+                    continue
+
+                tmp.setdefault(key, []).append((inicio_min, linha))
+
+            for key, itens in tmp.items():
+                itens.sort(key=lambda x: x[0])
+                self.servicos[key] = [t for _, t in itens]
+
+        except Exception:
+            # se der erro de conexão/etc, só não marca serviços
+            self.servicos = {}
 
     # =========================================================
     # UI
@@ -124,17 +200,13 @@ class PaginaInicio(ctk.CTkFrame):
         )
         self.lbl_subtitulo_inicio.grid(row=2, column=0, padx=22, pady=(6, 0), sticky="")
 
-        # Responsivo só aqui
         self.card_boas_vindas.bind("<Configure>", self._on_resize_boas_vindas)
 
     def _criar_coluna_status(self):
-        # IMPORTANTE: NÃO usar grid_propagate(False) aqui sem controlar altura total.
-        # Mantemos largura fixa, mas deixamos a altura ser definida pelo conteúdo.
         self.coluna_status = ctk.CTkFrame(self, fg_color="transparent", width=360)
         self.coluna_status.grid(row=1, column=0, padx=(30, 12), pady=(0, 24), sticky="nw")
         self.coluna_status.grid_columnconfigure(0, weight=1)
 
-        # Cards fixos (sem responsividade)
         self._criar_card_relogio(self.coluna_status)
         self._criar_card_temperatura(self.coluna_status)
 
@@ -217,7 +289,7 @@ class PaginaInicio(ctk.CTkFrame):
             text_color=theme.COR_TEXTO_SEC,
             anchor="center",
             justify="center",
-            wraplength=320,  # fixo
+            wraplength=320,
         )
         self.lbl_clima.grid(row=2, column=0, padx=16, pady=(0, 2), sticky="")
 
@@ -284,7 +356,6 @@ class PaginaInicio(ctk.CTkFrame):
         for r in range(7):
             self.frame_dias.grid_rowconfigure(r, weight=1, uniform="cal_rows")
 
-        # Responsivo só no calendário
         self.card_calendario.bind("<Configure>", self._on_resize_calendario)
 
     # =========================================================
@@ -600,7 +671,7 @@ class PaginaInicio(ctk.CTkFrame):
                 text_color=theme.COR_TEXTO_SEC,
                 justify="left",
                 anchor="w",
-                wraplength=280,
+                wraplength=320,
             ).pack(anchor="w", padx=10, pady=1)
 
         ctk.CTkLabel(box, text="", height=4).pack()
@@ -727,6 +798,9 @@ class PaginaInicio(ctk.CTkFrame):
             self.cal_ano -= 1
 
         self.data_selecionada = date(self.cal_ano, self.cal_mes, 1)
+
+        # ✅ recarrega do DB
+        self._carregar_servicos_do_mes()
         self._render_calendario()
 
     def _mes_proximo(self):
@@ -739,46 +813,18 @@ class PaginaInicio(ctk.CTkFrame):
             self.cal_ano += 1
 
         self.data_selecionada = date(self.cal_ano, self.cal_mes, 1)
+
+        # ✅ recarrega do DB
+        self._carregar_servicos_do_mes()
         self._render_calendario()
 
     def _nome_mes(self, mes):
         nomes = {
-            1: "Janeiro",
-            2: "Fevereiro",
-            3: "Março",
-            4: "Abril",
-            5: "Maio",
-            6: "Junho",
-            7: "Julho",
-            8: "Agosto",
-            9: "Setembro",
-            10: "Outubro",
-            11: "Novembro",
-            12: "Dezembro",
+            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+            5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+            9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
         }
         return nomes[mes]
-
-    # =========================================================
-    # Mock de dados
-    # =========================================================
-    def _mock_servicos(self):
-        hoje = date.today()
-        return {
-            hoje.isoformat(): [
-                "09:00 - Revisar freezer da loja 1",
-                "15:30 - Entrega especial de sorvetes",
-            ],
-            (hoje + timedelta(days=1)).isoformat(): [
-                "08:30 - Limpeza técnica da máquina de açaí",
-            ],
-            (hoje + timedelta(days=2)).isoformat(): [
-                "10:00 - Manutenção preventiva no balcão",
-                "16:00 - Reabastecimento de estoque",
-            ],
-            (hoje + timedelta(days=4)).isoformat(): [
-                "14:00 - Serviço externo em evento corporativo",
-            ],
-        }
 
     # =========================================================
     # Limpeza

@@ -1,5 +1,6 @@
+# app/pages/fidelidade/page.py
+
 import customtkinter as ctk
-from datetime import datetime
 
 from app.config.theme import (
     COR_FUNDO,
@@ -22,51 +23,46 @@ class PaginaFidelidade(ctk.CTkFrame):
     Estrutura responsiva (baseada em 1100x680):
     - Linha superior:
         1) Resumo do cliente
-        2) Buscar cliente
+        2) Cálculo automático de pontos
     - Linha inferior:
-        3) Cálculo automático de pontos
+        3) Buscar cliente
         4) Ações de fidelidade
-
-    RN05:
-    - Varejo: 1 ponto a cada R$ 5,00 gasto
-    - Revendedor: 2 pontos a cada R$ 50,00 gastos
     """
 
     LARGURA_BASE = 1100
     ALTURA_BASE = 680
 
-    def __init__(self, master):
+    def __init__(self, master, sistema):
         super().__init__(master, fg_color=COR_FUNDO)
 
+        self.sistema = sistema
         self.cliente_selecionado = None
 
         # =====================================================
-        # Fontes (criadas uma vez, depois apenas reconfiguradas)
+        # Fontes (mais compactas para caber melhor em 1100x680)
         # =====================================================
-        self.font_titulo = ctk.CTkFont(family=FONTE, size=22, weight="bold")
-        self.font_subtitulo = ctk.CTkFont(family=FONTE, size=11)
-        self.font_card_titulo = ctk.CTkFont(family=FONTE, size=16, weight="bold")
-        self.font_label = ctk.CTkFont(family=FONTE, size=11, weight="bold")
-        self.font_valor = ctk.CTkFont(family=FONTE, size=11)
-        self.font_botao = ctk.CTkFont(family=FONTE, size=11, weight="bold")
-        self.font_feedback = ctk.CTkFont(family=FONTE, size=11)
-        self.font_destaque = ctk.CTkFont(family=FONTE, size=24, weight="bold")
-        self.font_segmented = ctk.CTkFont(family=FONTE, size=10, weight="bold")
+        self.font_titulo = ctk.CTkFont(family=FONTE, size=20, weight="bold")
+        self.font_card_titulo = ctk.CTkFont(family=FONTE, size=14, weight="bold")
+        self.font_label = ctk.CTkFont(family=FONTE, size=10, weight="bold")
+        self.font_valor = ctk.CTkFont(family=FONTE, size=10)
+        self.font_botao = ctk.CTkFont(family=FONTE, size=10, weight="bold")
+        self.font_feedback = ctk.CTkFont(family=FONTE, size=10)
+        self.font_destaque = ctk.CTkFont(family=FONTE, size=20, weight="bold")
+        self.font_segmented = ctk.CTkFont(family=FONTE, size=9, weight="bold")
 
-        # alturas dinâmicas
-        self.entry_height = 38
-        self.button_height = 36
-        self.segmented_height = 34
-        self.textbox_height = 84
+        # alturas dinâmicas (mais compactas)
+        self.entry_height = 34
+        self.button_height = 34
+        self.segmented_height = 30
+        self.textbox_height = 68
 
         self._criar_layout_principal()
         self._criar_frame_resumo_cliente()
-        self._criar_frame_busca_cliente()
         self._criar_frame_calculo_automatico()
+        self._criar_frame_busca_cliente()
         self._criar_frame_acoes_fidelidade()
 
-        self._carregar_cliente_exemplo()
-        self._atualizar_interface_cliente()
+        self._limpar_interface_cliente()
 
         # Responsividade real conforme a área renderizada
         self.bind("<Configure>", self._ao_redimensionar)
@@ -79,7 +75,7 @@ class PaginaFidelidade(ctk.CTkFrame):
         self.grid_rowconfigure(1, weight=1)
 
         self.frame_topo = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_topo.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 10))
+        self.frame_topo.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 6))
         self.frame_topo.grid_columnconfigure(0, weight=1)
 
         self.label_titulo = ctk.CTkLabel(
@@ -90,32 +86,15 @@ class PaginaFidelidade(ctk.CTkFrame):
         )
         self.label_titulo.grid(row=0, column=0, sticky="w")
 
-        self.label_subtitulo = ctk.CTkLabel(
-            self.frame_topo,
-            text="Gerencie clientes, pontuação e movimentações do programa de fidelidade.",
-            font=self.font_subtitulo,
-            text_color=COR_TEXTO_SEC,
-        )
-        self.label_subtitulo.grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        self.label_regra = ctk.CTkLabel(
-            self.frame_topo,
-            text="RN05 • Varejo: 1 ponto / R$ 5,00 • Revendedor: 2 pontos / R$ 50,00",
-            font=self.font_subtitulo,
-            text_color=COR_TEXTO,
-        )
-        self.label_regra.grid(row=2, column=0, sticky="w", pady=(6, 0))
-
         self.frame_grid = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_grid.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        self.frame_grid.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 14))
 
-        # 2 colunas iguais
         self.frame_grid.grid_columnconfigure(0, weight=1, uniform="col")
         self.frame_grid.grid_columnconfigure(1, weight=1, uniform="col")
 
-        # Linha superior recebe mais espaço para evitar corte no resumo
-        self.frame_grid.grid_rowconfigure(0, weight=11)
-        self.frame_grid.grid_rowconfigure(1, weight=9)
+        # Linhas iguais para dar mais espaço ao card de ações
+        self.frame_grid.grid_rowconfigure(0, weight=1, uniform="row")
+        self.frame_grid.grid_rowconfigure(1, weight=1, uniform="row")
 
     # =========================================================
     # FRAME 1 - RESUMO DO CLIENTE
@@ -128,7 +107,6 @@ class PaginaFidelidade(ctk.CTkFrame):
         )
         self.frame_resumo.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
         self.frame_resumo.grid_columnconfigure(1, weight=1)
-        self.frame_resumo.grid_rowconfigure(10, weight=1)
 
         self.label_resumo_titulo = ctk.CTkLabel(
             self.frame_resumo,
@@ -136,7 +114,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             font=self.font_card_titulo,
             text_color=COR_TEXTO,
         )
-        self.label_resumo_titulo.grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 8))
+        self.label_resumo_titulo.grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(10, 6))
 
         self.var_nome = ctk.StringVar(value="-")
         self.var_telefone = ctk.StringVar(value="-")
@@ -170,7 +148,7 @@ class PaginaFidelidade(ctk.CTkFrame):
                 font=self.font_label,
                 text_color=COR_TEXTO,
             )
-            lbl_rotulo.grid(row=i, column=0, sticky="w", padx=(14, 8), pady=3)
+            lbl_rotulo.grid(row=i, column=0, sticky="w", padx=(14, 8), pady=2)
 
             lbl_valor = ctk.CTkLabel(
                 self.frame_resumo,
@@ -179,7 +157,7 @@ class PaginaFidelidade(ctk.CTkFrame):
                 text_color=COR_TEXTO_SEC,
                 anchor="w",
             )
-            lbl_valor.grid(row=i, column=1, sticky="w", padx=(0, 14), pady=3)
+            lbl_valor.grid(row=i, column=1, sticky="w", padx=(0, 14), pady=2)
 
             self._resumo_rotulos.append(lbl_rotulo)
             self._resumo_valores.append(lbl_valor)
@@ -189,107 +167,20 @@ class PaginaFidelidade(ctk.CTkFrame):
             text="Selecione ou busque um cliente para começar.",
             font=self.font_feedback,
             text_color=COR_TEXTO_SEC,
-            wraplength=420,
+            wraplength=360,
             justify="left",
         )
         self.label_status_operacao.grid(
             row=10,
             column=0,
             columnspan=2,
-            sticky="sw",
+            sticky="w",
             padx=14,
-            pady=(8, 12),
+            pady=(4, 8),
         )
 
     # =========================================================
-    # FRAME 2 - BUSCAR CLIENTE
-    # =========================================================
-    def _criar_frame_busca_cliente(self):
-        self.frame_busca = ctk.CTkFrame(
-            self.frame_grid,
-            fg_color=COR_PAINEL,
-            corner_radius=14,
-        )
-        self.frame_busca.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 8))
-        self.frame_busca.grid_columnconfigure(0, weight=1)
-        self.frame_busca.grid_rowconfigure(5, weight=1)
-
-        self.label_busca_titulo = ctk.CTkLabel(
-            self.frame_busca,
-            text="Buscar cliente",
-            font=self.font_card_titulo,
-            text_color=COR_TEXTO,
-        )
-        self.label_busca_titulo.grid(row=0, column=0, sticky="w", padx=14, pady=(12, 8))
-
-        self.entry_nome = ctk.CTkEntry(
-            self.frame_busca,
-            placeholder_text="Nome",
-            height=self.entry_height,
-            corner_radius=10,
-        )
-        self.entry_nome.grid(row=1, column=0, sticky="ew", padx=14, pady=5)
-
-        self.entry_telefone = ctk.CTkEntry(
-            self.frame_busca,
-            placeholder_text="Telefone",
-            height=self.entry_height,
-            corner_radius=10,
-        )
-        self.entry_telefone.grid(row=2, column=0, sticky="ew", padx=14, pady=5)
-
-        self.entry_codigo = ctk.CTkEntry(
-            self.frame_busca,
-            placeholder_text="Código / ID",
-            height=self.entry_height,
-            corner_radius=10,
-        )
-        self.entry_codigo.grid(row=3, column=0, sticky="ew", padx=14, pady=5)
-
-        # Botões reorganizados para não cortar em 1100x680
-        self.frame_botoes_busca = ctk.CTkFrame(self.frame_busca, fg_color="transparent")
-        self.frame_botoes_busca.grid(row=4, column=0, sticky="ew", padx=14, pady=(8, 12))
-        self.frame_botoes_busca.grid_columnconfigure(0, weight=1)
-        self.frame_botoes_busca.grid_columnconfigure(1, weight=1)
-
-        self.btn_buscar = ctk.CTkButton(
-            self.frame_botoes_busca,
-            text="Buscar",
-            height=self.button_height,
-            fg_color=COR_BOTAO,
-            hover_color=COR_HOVER,
-            text_color=COR_TEXTO,
-            font=self.font_botao,
-            command=self.buscar_cliente,
-        )
-        self.btn_buscar.grid(row=0, column=0, sticky="ew", padx=(0, 5), pady=(0, 5))
-
-        self.btn_limpar = ctk.CTkButton(
-            self.frame_botoes_busca,
-            text="Limpar",
-            height=self.button_height,
-            fg_color=COR_BOTAO,
-            hover_color=COR_HOVER,
-            text_color=COR_TEXTO,
-            font=self.font_botao,
-            command=self.limpar_busca,
-        )
-        self.btn_limpar.grid(row=0, column=1, sticky="ew", padx=(5, 0), pady=(0, 5))
-
-        self.btn_novo_cliente = ctk.CTkButton(
-            self.frame_botoes_busca,
-            text="Novo cliente",
-            height=self.button_height,
-            fg_color=COR_BOTAO,
-            hover_color=COR_HOVER,
-            text_color=COR_TEXTO,
-            font=self.font_botao,
-            command=self.novo_cliente,
-        )
-        self.btn_novo_cliente.grid(row=1, column=0, columnspan=2, sticky="ew")
-
-    # =========================================================
-    # FRAME 3 - CÁLCULO AUTOMÁTICO
+    # FRAME 2 - CÁLCULO AUTOMÁTICO
     # =========================================================
     def _criar_frame_calculo_automatico(self):
         self.frame_calculo = ctk.CTkFrame(
@@ -297,9 +188,8 @@ class PaginaFidelidade(ctk.CTkFrame):
             fg_color=COR_PAINEL,
             corner_radius=14,
         )
-        self.frame_calculo.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(8, 0))
+        self.frame_calculo.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 8))
         self.frame_calculo.grid_columnconfigure(0, weight=1)
-        self.frame_calculo.grid_rowconfigure(6, weight=1)
 
         self.label_calculo_titulo = ctk.CTkLabel(
             self.frame_calculo,
@@ -307,7 +197,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             font=self.font_card_titulo,
             text_color=COR_TEXTO,
         )
-        self.label_calculo_titulo.grid(row=0, column=0, sticky="w", padx=14, pady=(12, 8))
+        self.label_calculo_titulo.grid(row=0, column=0, sticky="w", padx=14, pady=(10, 6))
 
         self.combo_tipo_cliente = ctk.CTkOptionMenu(
             self.frame_calculo,
@@ -323,7 +213,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             dropdown_hover_color=COR_HOVER,
             font=self.font_botao,
         )
-        self.combo_tipo_cliente.grid(row=1, column=0, sticky="ew", padx=14, pady=5)
+        self.combo_tipo_cliente.grid(row=1, column=0, sticky="ew", padx=14, pady=4)
         self.combo_tipo_cliente.set("Varejo")
 
         self.entry_valor_compra = ctk.CTkEntry(
@@ -332,7 +222,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             height=self.entry_height,
             corner_radius=10,
         )
-        self.entry_valor_compra.grid(row=2, column=0, sticky="ew", padx=14, pady=5)
+        self.entry_valor_compra.grid(row=2, column=0, sticky="ew", padx=14, pady=4)
 
         self.btn_calcular = ctk.CTkButton(
             self.frame_calculo,
@@ -344,7 +234,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             font=self.font_botao,
             command=self.calcular_pontos_interface,
         )
-        self.btn_calcular.grid(row=3, column=0, sticky="ew", padx=14, pady=(8, 6))
+        self.btn_calcular.grid(row=3, column=0, sticky="ew", padx=14, pady=(6, 4))
 
         self.var_pontos_calculados = ctk.StringVar(value="0")
         self.var_regra_aplicada = ctk.StringVar(value="Aguardando cálculo.")
@@ -355,7 +245,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             font=self.font_label,
             text_color=COR_TEXTO,
         )
-        self.label_pontos_calculados.grid(row=4, column=0, sticky="w", padx=14, pady=(6, 0))
+        self.label_pontos_calculados.grid(row=4, column=0, sticky="w", padx=14, pady=(4, 0))
 
         self.label_pontos_valor = ctk.CTkLabel(
             self.frame_calculo,
@@ -370,10 +260,95 @@ class PaginaFidelidade(ctk.CTkFrame):
             textvariable=self.var_regra_aplicada,
             font=self.font_feedback,
             text_color=COR_TEXTO_SEC,
-            wraplength=420,
+            wraplength=360,
             justify="left",
         )
-        self.label_regra_aplicada.grid(row=6, column=0, sticky="sw", padx=14, pady=(2, 12))
+        self.label_regra_aplicada.grid(row=6, column=0, sticky="w", padx=14, pady=(2, 8))
+
+    # =========================================================
+    # FRAME 3 - BUSCAR CLIENTE
+    # =========================================================
+    def _criar_frame_busca_cliente(self):
+        self.frame_busca = ctk.CTkFrame(
+            self.frame_grid,
+            fg_color=COR_PAINEL,
+            corner_radius=14,
+        )
+        self.frame_busca.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(8, 0))
+        self.frame_busca.grid_columnconfigure(0, weight=1)
+
+        self.label_busca_titulo = ctk.CTkLabel(
+            self.frame_busca,
+            text="Buscar cliente",
+            font=self.font_card_titulo,
+            text_color=COR_TEXTO,
+        )
+        self.label_busca_titulo.grid(row=0, column=0, sticky="w", padx=14, pady=(10, 6))
+
+        self.entry_nome = ctk.CTkEntry(
+            self.frame_busca,
+            placeholder_text="Nome",
+            height=self.entry_height,
+            corner_radius=10,
+        )
+        self.entry_nome.grid(row=1, column=0, sticky="ew", padx=14, pady=4)
+
+        self.entry_telefone = ctk.CTkEntry(
+            self.frame_busca,
+            placeholder_text="Telefone",
+            height=self.entry_height,
+            corner_radius=10,
+        )
+        self.entry_telefone.grid(row=2, column=0, sticky="ew", padx=14, pady=4)
+
+        self.entry_codigo = ctk.CTkEntry(
+            self.frame_busca,
+            placeholder_text="Código / ID",
+            height=self.entry_height,
+            corner_radius=10,
+        )
+        self.entry_codigo.grid(row=3, column=0, sticky="ew", padx=14, pady=4)
+
+        self.frame_botoes_busca = ctk.CTkFrame(self.frame_busca, fg_color="transparent")
+        self.frame_botoes_busca.grid(row=4, column=0, sticky="ew", padx=14, pady=(6, 8))
+        self.frame_botoes_busca.grid_columnconfigure(0, weight=1)
+        self.frame_botoes_busca.grid_columnconfigure(1, weight=1)
+
+        self.btn_buscar = ctk.CTkButton(
+            self.frame_botoes_busca,
+            text="Buscar",
+            height=self.button_height,
+            fg_color=COR_BOTAO,
+            hover_color=COR_HOVER,
+            text_color=COR_TEXTO,
+            font=self.font_botao,
+            command=self.buscar_cliente,
+        )
+        self.btn_buscar.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=(0, 4))
+
+        self.btn_limpar = ctk.CTkButton(
+            self.frame_botoes_busca,
+            text="Limpar",
+            height=self.button_height,
+            fg_color=COR_BOTAO,
+            hover_color=COR_HOVER,
+            text_color=COR_TEXTO,
+            font=self.font_botao,
+            command=self.limpar_busca,
+        )
+        self.btn_limpar.grid(row=0, column=1, sticky="ew", padx=(4, 0), pady=(0, 4))
+
+        self.btn_novo_cliente = ctk.CTkButton(
+            self.frame_botoes_busca,
+            text="Novo cliente",
+            height=self.button_height,
+            fg_color=COR_BOTAO,
+            hover_color=COR_HOVER,
+            text_color=COR_TEXTO,
+            font=self.font_botao,
+            command=self.novo_cliente,
+        )
+        self.btn_novo_cliente.grid(row=1, column=0, columnspan=2, sticky="ew")
 
     # =========================================================
     # FRAME 4 - AÇÕES DE FIDELIDADE
@@ -386,7 +361,9 @@ class PaginaFidelidade(ctk.CTkFrame):
         )
         self.frame_acoes.grid(row=1, column=1, sticky="nsew", padx=(8, 0), pady=(8, 0))
         self.frame_acoes.grid_columnconfigure(0, weight=1)
-        self.frame_acoes.grid_rowconfigure(7, weight=1)
+
+        # Faz o textbox crescer primeiro, evitando cortar os botões
+        self.frame_acoes.grid_rowconfigure(5, weight=1)
 
         self.label_acoes_titulo = ctk.CTkLabel(
             self.frame_acoes,
@@ -394,7 +371,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             font=self.font_card_titulo,
             text_color=COR_TEXTO,
         )
-        self.label_acoes_titulo.grid(row=0, column=0, sticky="w", padx=14, pady=(12, 8))
+        self.label_acoes_titulo.grid(row=0, column=0, sticky="w", padx=14, pady=(10, 6))
 
         self.segmented_acao = ctk.CTkSegmentedButton(
             self.frame_acoes,
@@ -408,7 +385,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             text_color=COR_TEXTO,
             font=self.font_segmented,
         )
-        self.segmented_acao.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 8))
+        self.segmented_acao.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 6))
         self.segmented_acao.set("Adicionar")
 
         self.entry_quantidade_pontos = ctk.CTkEntry(
@@ -417,15 +394,15 @@ class PaginaFidelidade(ctk.CTkFrame):
             height=self.entry_height,
             corner_radius=10,
         )
-        self.entry_quantidade_pontos.grid(row=2, column=0, sticky="ew", padx=14, pady=5)
+        self.entry_quantidade_pontos.grid(row=2, column=0, sticky="ew", padx=14, pady=4)
 
         self.entry_valor_compra_acao = ctk.CTkEntry(
             self.frame_acoes,
-            placeholder_text="Valor da compra (opcional para adicionar)",
+            placeholder_text="Valor da compra (apoio manual)",
             height=self.entry_height,
             corner_radius=10,
         )
-        self.entry_valor_compra_acao.grid(row=3, column=0, sticky="ew", padx=14, pady=5)
+        self.entry_valor_compra_acao.grid(row=3, column=0, sticky="ew", padx=14, pady=4)
 
         self.entry_motivo = ctk.CTkEntry(
             self.frame_acoes,
@@ -433,7 +410,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             height=self.entry_height,
             corner_radius=10,
         )
-        self.entry_motivo.grid(row=4, column=0, sticky="ew", padx=14, pady=5)
+        self.entry_motivo.grid(row=4, column=0, sticky="ew", padx=14, pady=4)
 
         self.text_observacao = ctk.CTkTextbox(
             self.frame_acoes,
@@ -444,11 +421,11 @@ class PaginaFidelidade(ctk.CTkFrame):
             border_width=0,
             font=self.font_valor,
         )
-        self.text_observacao.grid(row=5, column=0, sticky="ew", padx=14, pady=5)
+        self.text_observacao.grid(row=5, column=0, sticky="nsew", padx=14, pady=4)
         self.text_observacao.insert("1.0", "Observação...")
 
         self.frame_botoes_acao = ctk.CTkFrame(self.frame_acoes, fg_color="transparent")
-        self.frame_botoes_acao.grid(row=6, column=0, sticky="ew", padx=14, pady=(8, 6))
+        self.frame_botoes_acao.grid(row=6, column=0, sticky="ew", padx=14, pady=(6, 4))
         self.frame_botoes_acao.grid_columnconfigure(0, weight=1)
         self.frame_botoes_acao.grid_columnconfigure(1, weight=1)
 
@@ -462,7 +439,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             font=self.font_botao,
             command=self.executar_acao_fidelidade,
         )
-        self.btn_confirmar.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        self.btn_confirmar.grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
         self.btn_cancelar = ctk.CTkButton(
             self.frame_botoes_acao,
@@ -474,7 +451,7 @@ class PaginaFidelidade(ctk.CTkFrame):
             font=self.font_botao,
             command=self.cancelar_acao,
         )
-        self.btn_cancelar.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        self.btn_cancelar.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         self.var_feedback_acao = ctk.StringVar(value="Nenhuma ação executada.")
         self.label_feedback_acao = ctk.CTkLabel(
@@ -482,10 +459,10 @@ class PaginaFidelidade(ctk.CTkFrame):
             textvariable=self.var_feedback_acao,
             font=self.font_feedback,
             text_color=COR_TEXTO_SEC,
-            wraplength=420,
+            wraplength=360,
             justify="left",
         )
-        self.label_feedback_acao.grid(row=7, column=0, sticky="sw", padx=14, pady=(2, 12))
+        self.label_feedback_acao.grid(row=7, column=0, sticky="w", padx=14, pady=(2, 8))
 
     # =========================================================
     # RESPONSIVIDADE
@@ -498,19 +475,16 @@ class PaginaFidelidade(ctk.CTkFrame):
         escala_h = altura / self.ALTURA_BASE
         escala = min(escala_w, escala_h)
 
-        # tamanhos de fonte limitados para não explodir nem ficar minúsculos
-        titulo_size = self._clamp(int(22 * escala), 18, 26)
-        subtitulo_size = self._clamp(int(11 * escala), 10, 13)
-        card_titulo_size = self._clamp(int(16 * escala), 13, 18)
-        label_size = self._clamp(int(11 * escala), 10, 12)
-        valor_size = self._clamp(int(11 * escala), 10, 12)
-        botao_size = self._clamp(int(11 * escala), 10, 12)
-        feedback_size = self._clamp(int(11 * escala), 10, 12)
-        destaque_size = self._clamp(int(24 * escala), 20, 28)
-        segmented_size = self._clamp(int(10 * escala), 9, 11)
+        titulo_size = self._clamp(int(20 * escala), 17, 24)
+        card_titulo_size = self._clamp(int(14 * escala), 12, 16)
+        label_size = self._clamp(int(10 * escala), 9, 11)
+        valor_size = self._clamp(int(10 * escala), 9, 11)
+        botao_size = self._clamp(int(10 * escala), 9, 11)
+        feedback_size = self._clamp(int(10 * escala), 9, 11)
+        destaque_size = self._clamp(int(20 * escala), 18, 24)
+        segmented_size = self._clamp(int(9 * escala), 8, 10)
 
         self.font_titulo.configure(size=titulo_size)
-        self.font_subtitulo.configure(size=subtitulo_size)
         self.font_card_titulo.configure(size=card_titulo_size)
         self.font_label.configure(size=label_size)
         self.font_valor.configure(size=valor_size)
@@ -519,11 +493,10 @@ class PaginaFidelidade(ctk.CTkFrame):
         self.font_destaque.configure(size=destaque_size)
         self.font_segmented.configure(size=segmented_size)
 
-        # alturas responsivas
-        self.entry_height = self._clamp(int(38 * escala_h), 34, 44)
-        self.button_height = self._clamp(int(36 * escala_h), 34, 42)
-        self.segmented_height = self._clamp(int(34 * escala_h), 32, 40)
-        self.textbox_height = self._clamp(int(84 * escala_h), 72, 105)
+        self.entry_height = self._clamp(int(34 * escala_h), 32, 40)
+        self.button_height = self._clamp(int(34 * escala_h), 32, 38)
+        self.segmented_height = self._clamp(int(30 * escala_h), 28, 34)
+        self.textbox_height = self._clamp(int(68 * escala_h), 58, 84)
 
         widgets_altura = [
             self.entry_nome,
@@ -552,49 +525,76 @@ class PaginaFidelidade(ctk.CTkFrame):
         self.segmented_acao.configure(height=self.segmented_height)
         self.text_observacao.configure(height=self.textbox_height)
 
-        # wrap adaptável ao tamanho do card
-        largura_wrap = self._clamp(int((largura / 2) - 80), 280, 460)
+        largura_wrap = self._clamp(int((largura / 2) - 100), 240, 380)
         self.label_status_operacao.configure(wraplength=largura_wrap)
         self.label_regra_aplicada.configure(wraplength=largura_wrap)
         self.label_feedback_acao.configure(wraplength=largura_wrap)
 
     # =========================================================
-    # DADOS DE EXEMPLO
-    # =========================================================
-    def _carregar_cliente_exemplo(self):
-        self.cliente_selecionado = {
-            "id": "CLI-001",
-            "nome": "Maria Souza",
-            "telefone": "(91) 99999-0000",
-            "cadastro": "12/01/2026",
-            "tipo_cliente": "Varejo",
-            "pontos_atuais": 48,
-            "total_acumulado": 132,
-            "ultima_compra": "24/02/2026",
-            "status": "Ativo",
-        }
-
-    # =========================================================
-    # BUSCA / CLIENTE
+    # CLIENTE / BUSCA REAL
     # =========================================================
     def buscar_cliente(self):
-        if self.cliente_selecionado is None:
-            self._carregar_cliente_exemplo()
-
         nome = self.entry_nome.get().strip()
         telefone = self.entry_telefone.get().strip()
         codigo = self.entry_codigo.get().strip()
 
-        if nome:
-            self.cliente_selecionado["nome"] = nome
-        if telefone:
-            self.cliente_selecionado["telefone"] = telefone
-        if codigo:
-            self.cliente_selecionado["id"] = codigo
+        termo = nome or telefone or codigo
 
-        self.cliente_selecionado["status"] = "Ativo"
+        if not termo and self.cliente_selecionado:
+            termo = str(self.cliente_selecionado.get("id", "")).strip()
+
+        if not termo:
+            self.label_status_operacao.configure(
+                text="Informe nome, telefone ou código para buscar.",
+                text_color=COR_ERRO,
+            )
+            return
+
+        if not self.sistema or not hasattr(self.sistema, "listar_clientes"):
+            self.label_status_operacao.configure(
+                text="Sistema de clientes não disponível.",
+                text_color=COR_ERRO,
+            )
+            return
+
+        resultados = self.sistema.listar_clientes(termo=termo)
+
+        if not resultados and codigo and hasattr(self.sistema, "obter_cliente"):
+            try:
+                cliente_id = int(codigo)
+                cliente = self.sistema.obter_cliente(cliente_id)
+                if cliente:
+                    resultados = [cliente]
+            except Exception:
+                pass
+
+        if not resultados and self.cliente_selecionado and hasattr(self.sistema, "obter_cliente"):
+            try:
+                cliente = self.sistema.obter_cliente(int(self.cliente_selecionado["id"]))
+                if cliente:
+                    resultados = [cliente]
+            except Exception:
+                pass
+
+        if not resultados:
+            self.label_status_operacao.configure(
+                text="Cliente não encontrado.",
+                text_color=COR_ERRO,
+            )
+            return
+
+        c = resultados[0]
+        self.cliente_selecionado = self._mapear_cliente_para_interface(c)
+
+        try:
+            tipo = self.cliente_selecionado.get("tipo_cliente", "Varejo")
+            if tipo in ("Varejo", "Revendedor"):
+                self.combo_tipo_cliente.set(tipo)
+        except Exception:
+            pass
 
         self._atualizar_interface_cliente()
+
         self.label_status_operacao.configure(
             text="Cliente localizado com sucesso.",
             text_color=COR_SUCESSO,
@@ -615,32 +615,56 @@ class PaginaFidelidade(ctk.CTkFrame):
         self.entry_telefone.delete(0, "end")
         self.entry_codigo.delete(0, "end")
 
-        self.cliente_selecionado = {
-            "id": "NOVO",
-            "nome": "Novo cliente",
-            "telefone": "-",
-            "cadastro": datetime.now().strftime("%d/%m/%Y"),
-            "tipo_cliente": "Varejo",
-            "pontos_atuais": 0,
-            "total_acumulado": 0,
-            "ultima_compra": "-",
-            "status": "Ativo",
-        }
+        self.cliente_selecionado = None
+        self._limpar_interface_cliente()
 
-        self._atualizar_interface_cliente()
         self.label_status_operacao.configure(
-            text="Novo cliente preparado.",
-            text_color=COR_SUCESSO,
+            text="Cadastre o cliente na tela de Clientes para usar a fidelidade.",
+            text_color=COR_TEXTO_SEC,
         )
 
+    def _mapear_cliente_para_interface(self, cliente):
+        cadastro = self._formatar_data_cliente(cliente.get("cadastro"))
+        ultima_compra = self._formatar_data_cliente(cliente.get("ultima_compra"))
+
+        return {
+            "id": cliente.get("id"),
+            "nome": cliente.get("nome", "-"),
+            "telefone": cliente.get("telefone", "-"),
+            "cadastro": cadastro,
+            "tipo_cliente": cliente.get("tipo_cliente", "Varejo"),
+            "pontos_atuais": int(cliente.get("pontos_atuais", 0)),
+            "total_acumulado": int(cliente.get("total_acumulado", 0)),
+            "ultima_compra": ultima_compra,
+            "status": cliente.get("status", "Inativo"),
+        }
+
+    def _formatar_data_cliente(self, valor):
+        if not valor:
+            return "-"
+
+        if hasattr(valor, "strftime"):
+            try:
+                return valor.strftime("%d/%m/%Y")
+            except Exception:
+                pass
+
+        return str(valor)
+
     # =========================================================
-    # RN05
+    # RN05 / CÁLCULO DE PONTOS
     # =========================================================
     def calcular_pontos_por_compra(self, tipo_cliente: str, valor_compra: float) -> int:
         if valor_compra <= 0:
             return 0
 
-        tipo = tipo_cliente.strip().lower()
+        if self.sistema and hasattr(self.sistema, "calcular_pontos_rn05"):
+            try:
+                return int(self.sistema.calcular_pontos_rn05(tipo_cliente, valor_compra))
+            except Exception:
+                pass
+
+        tipo = str(tipo_cliente).strip().lower()
 
         if tipo == "varejo":
             return int(valor_compra // 5)
@@ -686,7 +710,7 @@ class PaginaFidelidade(ctk.CTkFrame):
         self.label_feedback_acao.configure(text_color=COR_SUCESSO)
 
     # =========================================================
-    # AÇÕES DE FIDELIDADE
+    # AÇÕES DE FIDELIDADE (USANDO O SERVIÇO)
     # =========================================================
     def executar_acao_fidelidade(self):
         if not self.cliente_selecionado:
@@ -694,66 +718,50 @@ class PaginaFidelidade(ctk.CTkFrame):
             self.label_feedback_acao.configure(text_color=COR_ERRO)
             return
 
-        acao = self.segmented_acao.get()
-        quantidade = self._obter_int(self.entry_quantidade_pontos.get())
-        valor_compra = self._obter_float(self.entry_valor_compra_acao.get())
-        motivo = self.entry_motivo.get().strip() or "Sem motivo informado"
-
-        tipo_cliente = self.cliente_selecionado.get("tipo_cliente", "Varejo")
-        pontos_atuais = int(self.cliente_selecionado.get("pontos_atuais", 0))
-        total_acumulado = int(self.cliente_selecionado.get("total_acumulado", 0))
-
-        if acao == "Adicionar" and valor_compra > 0:
-            quantidade = self.calcular_pontos_por_compra(tipo_cliente, valor_compra)
-            self.entry_quantidade_pontos.delete(0, "end")
-            self.entry_quantidade_pontos.insert(0, str(quantidade))
-
-        if acao in ("Adicionar", "Remover", "Resgatar", "Bônus") and quantidade <= 0:
-            self.var_feedback_acao.set("Informe uma quantidade válida de pontos.")
+        if not self.sistema or not hasattr(self.sistema, "movimentar_fidelidade"):
+            self.var_feedback_acao.set("Sistema de fidelidade não disponível.")
             self.label_feedback_acao.configure(text_color=COR_ERRO)
             return
 
-        if acao == "Adicionar":
-            pontos_atuais += quantidade
-            total_acumulado += quantidade
-            if valor_compra > 0:
-                self.cliente_selecionado["ultima_compra"] = datetime.now().strftime("%d/%m/%Y")
-            mensagem = f"{quantidade} ponto(s) adicionados. Motivo: {motivo}"
+        acao = self.segmented_acao.get().upper()
+        quantidade = self._obter_int(self.entry_quantidade_pontos.get())
+        motivo = self.entry_motivo.get().strip() or "Sem motivo"
 
-        elif acao == "Remover":
-            pontos_atuais = max(0, pontos_atuais - quantidade)
-            mensagem = f"{quantidade} ponto(s) removidos. Motivo: {motivo}"
+        mapa = {
+            "ADICIONAR": "ADICIONAR",
+            "REMOVER": "REMOVER",
+            "RESGATAR": "RESGATAR",
+            "BÔNUS": "BONUS",
+            "BONUS": "BONUS",
+            "ZERAR": "ZERAR",
+        }
 
-        elif acao == "Resgatar":
-            if quantidade > pontos_atuais:
-                self.var_feedback_acao.set("O cliente não possui pontos suficientes para resgate.")
-                self.label_feedback_acao.configure(text_color=COR_ERRO)
-                return
-            pontos_atuais -= quantidade
-            mensagem = f"{quantidade} ponto(s) resgatados. Motivo: {motivo}"
-
-        elif acao == "Bônus":
-            pontos_atuais += quantidade
-            total_acumulado += quantidade
-            mensagem = f"{quantidade} ponto(s) de bônus aplicados. Motivo: {motivo}"
-
-        elif acao == "Zerar":
-            quantidade_zerada = pontos_atuais
-            pontos_atuais = 0
-            mensagem = f"Pontos zerados com sucesso ({quantidade_zerada} ponto(s)). Motivo: {motivo}"
-
-        else:
+        acao_real = mapa.get(acao, None)
+        if not acao_real:
             self.var_feedback_acao.set("Ação inválida.")
             self.label_feedback_acao.configure(text_color=COR_ERRO)
             return
 
-        self.cliente_selecionado["pontos_atuais"] = pontos_atuais
-        self.cliente_selecionado["total_acumulado"] = total_acumulado
-        self.cliente_selecionado["status"] = "Ativo" if pontos_atuais > 0 else "Inativo"
+        if acao_real != "ZERAR" and quantidade <= 0:
+            self.var_feedback_acao.set("Informe uma quantidade válida.")
+            self.label_feedback_acao.configure(text_color=COR_ERRO)
+            return
 
-        self._atualizar_interface_cliente()
+        try:
+            self.sistema.movimentar_fidelidade(
+                cliente_id=self.cliente_selecionado["id"],
+                acao=acao_real,
+                pontos=quantidade,
+                motivo=motivo,
+            )
+        except Exception as e:
+            self.var_feedback_acao.set(f"Erro ao aplicar movimentação: {e}")
+            self.label_feedback_acao.configure(text_color=COR_ERRO)
+            return
 
-        self.var_feedback_acao.set(mensagem)
+        self.buscar_cliente()
+
+        self.var_feedback_acao.set("Movimentação aplicada com sucesso.")
         self.label_feedback_acao.configure(text_color=COR_SUCESSO)
 
         self.label_status_operacao.configure(
@@ -775,8 +783,21 @@ class PaginaFidelidade(ctk.CTkFrame):
     # =========================================================
     # ATUALIZAÇÃO DE INTERFACE
     # =========================================================
+    def _limpar_interface_cliente(self):
+        self.var_nome.set("-")
+        self.var_telefone.set("-")
+        self.var_cadastro.set("-")
+        self.var_tipo_cliente.set("-")
+        self.var_pontos_atuais.set("0")
+        self.var_total_acumulado.set("0")
+        self.var_ultima_compra.set("-")
+        self.var_status.set("Inativo")
+        self.var_nivel.set("-")
+        self._aplicar_destaques_resumo()
+
     def _atualizar_interface_cliente(self):
         if not self.cliente_selecionado:
+            self._limpar_interface_cliente()
             return
 
         pontos = int(self.cliente_selecionado.get("pontos_atuais", 0))
@@ -792,7 +813,13 @@ class PaginaFidelidade(ctk.CTkFrame):
         self.var_status.set(status)
         self.var_nivel.set(self.calcular_nivel(pontos))
 
-        # Destaques visuais
+        tipo = self.cliente_selecionado.get("tipo_cliente", "Varejo")
+        if tipo in ("Varejo", "Revendedor"):
+            try:
+                self.combo_tipo_cliente.set(tipo)
+            except Exception:
+                pass
+
         self._aplicar_destaques_resumo()
 
     def _aplicar_destaques_resumo(self):
@@ -800,11 +827,9 @@ class PaginaFidelidade(ctk.CTkFrame):
         status = self.var_status.get()
         nivel = self.var_nivel.get()
 
-        # Reseta cor padrão de todos os valores
         for lbl in self._resumo_valores:
             lbl.configure(text_color=COR_TEXTO_SEC)
 
-        # Índices fixos dos campos no array:
         # 0 nome, 1 telefone, 2 cadastro, 3 tipo, 4 pontos, 5 total, 6 última compra, 7 status, 8 nível
         self._resumo_valores[4].configure(text_color=COR_SUCESSO if pontos > 0 else COR_TEXTO)
         self._resumo_valores[7].configure(text_color=COR_SUCESSO if status == "Ativo" else COR_ERRO)
@@ -823,18 +848,25 @@ class PaginaFidelidade(ctk.CTkFrame):
     # =========================================================
     def _obter_float(self, valor_texto: str) -> float:
         try:
-            texto = valor_texto.strip().replace("R$", "").replace(".", "").replace(",", ".")
+            texto = str(valor_texto).strip().replace("R$", "").replace(" ", "")
             if not texto:
                 return 0.0
+
+            if "," in texto and "." in texto:
+                texto = texto.replace(".", "").replace(",", ".")
+            else:
+                texto = texto.replace(",", ".")
+
             return float(texto)
         except ValueError:
             return 0.0
 
     def _obter_int(self, valor_texto: str) -> int:
         try:
-            if not valor_texto.strip():
+            texto = str(valor_texto).strip()
+            if not texto:
                 return 0
-            return int(valor_texto)
+            return int(texto)
         except ValueError:
             return 0
 

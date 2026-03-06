@@ -1,12 +1,16 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Página com abas:
-  - Agendamentos de carrinhos de picolé
+  - Agendamentos de carrinhos
   - Agenda do dia
   - Delivery
+  - Carrinhos (CRUD)
+  - Motoristas (CRUD)
 
 Requisitos: customtkinter, tkinter
 """
+
+from __future__ import annotations
 
 import customtkinter as ctk
 from tkinter import ttk, messagebox
@@ -16,19 +20,853 @@ from app.config import theme
 
 
 # ===========================================================
+# DELIVERY (inalterado)
+# ===========================================================
+try:
+    from app.pages.servicos.delivery_inalterado import PaginaDelivery
+except Exception:
+    class PaginaDelivery(ctk.CTkFrame):
+        def __init__(self, master, sistema):
+            super().__init__(master, fg_color=theme.COR_FUNDO)
+            ctk.CTkLabel(
+                self,
+                text="Delivery não carregado",
+                font=ctk.CTkFont(family=theme.FONTE, size=16, weight="bold"),
+                text_color=theme.COR_TEXTO
+            ).pack(padx=20, pady=(20, 6), anchor="w")
+
+            ctk.CTkLabel(
+                self,
+                text="Crie o arquivo app/pages/servicos/delivery_inalterado.py "
+                     "e mova sua classe PaginaDelivery atual para lá.",
+                font=ctk.CTkFont(family=theme.FONTE, size=12),
+                text_color=theme.COR_TEXTO_SEC,
+                wraplength=900,
+                justify="left"
+            ).pack(padx=20, pady=(0, 20), anchor="w")
+
+
+# ===========================================================
+# HELPERS UI
+# ===========================================================
+_STYLE_OK = False
+
+
+def _ensure_tree_styles():
+    """
+    Configura estilos ttk para Treeview (compatível com theme).
+    Executa uma vez por arquivo, para evitar reconfigurações repetidas.
+    """
+    global _STYLE_OK
+    if _STYLE_OK:
+        return
+    _STYLE_OK = True
+
+    try:
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+
+        # Carrinhos CRUD
+        style.configure(
+            "Geladoce.Treeview",
+            font=(theme.FONTE, 11),
+            rowheight=32,
+            background=theme.COR_BOTAO,
+            fieldbackground=theme.COR_BOTAO,
+            foreground=theme.COR_TEXTO,
+            borderwidth=0,
+            relief="flat",
+        )
+        style.configure(
+            "Geladoce.Treeview.Heading",
+            font=(theme.FONTE, 11, "bold"),
+            background=theme.COR_PAINEL,
+            foreground=theme.COR_TEXTO,
+            borderwidth=0,
+            relief="flat",
+        )
+        style.map(
+            "Geladoce.Treeview",
+            background=[("selected", theme.COR_SELECIONADO)],
+            foreground=[("selected", theme.COR_TEXTO)],
+        )
+
+        # Agenda/Agendamentos (mesmo estilo)
+        style.configure(
+            "Geladoce.Agenda.Treeview",
+            font=(theme.FONTE, 11),
+            rowheight=34,
+            background=theme.COR_BOTAO,
+            fieldbackground=theme.COR_BOTAO,
+            foreground=theme.COR_TEXTO,
+            borderwidth=0,
+            relief="flat",
+        )
+        style.configure(
+            "Geladoce.Agenda.Treeview.Heading",
+            font=(theme.FONTE, 11, "bold"),
+            background=theme.COR_PAINEL,
+            foreground=theme.COR_TEXTO,
+            borderwidth=0,
+            relief="flat",
+        )
+        style.map(
+            "Geladoce.Agenda.Treeview",
+            background=[("selected", theme.COR_SELECIONADO)],
+            foreground=[("selected", theme.COR_TEXTO)],
+        )
+
+    except Exception:
+        # se der qualquer erro no ttk Style, a UI ainda funciona
+        pass
+
+
+def _digits(valor: str) -> str:
+    return "".join(ch for ch in str(valor or "") if ch.isdigit())
+
+
+# ===========================================================
+# ABA EXTRA: CRUD CARRINHOS
+# ===========================================================
+class PaginaCadastroCarrinhos(ctk.CTkFrame):
+    def __init__(self, master, sistema=None, on_changed=None):
+        super().__init__(master, fg_color=theme.COR_FUNDO)
+        _ensure_tree_styles()
+
+        self.sistema = sistema
+        self.on_changed = on_changed
+
+        self.grid_columnconfigure(0, weight=3)
+        self.grid_columnconfigure(1, weight=2)
+        self.grid_rowconfigure(1, weight=1)
+
+        self.termo_var = ctk.StringVar(value="")
+        self.status_filtro_var = ctk.StringVar(value="Todos")
+
+        self.id_externo_var = ctk.StringVar(value="")
+        self.nome_var = ctk.StringVar(value="")
+        self.capacidade_var = ctk.StringVar(value="0")
+        self.status_var = ctk.StringVar(value="Disponível")
+        self.qtd_lote_var = ctk.StringVar(value="1")
+
+        self._em_edicao_id = None
+
+        self.tree = None
+        self._frame_tree = None
+
+        self._montar_ui()
+        self._render()
+
+    def _montar_ui(self):
+        topo = ctk.CTkFrame(self, fg_color="transparent")
+        topo.grid(row=0, column=0, columnspan=2, padx=18, pady=(14, 10), sticky="ew")
+        topo.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            topo,
+            text="Carrinhos",
+            font=ctk.CTkFont(family=theme.FONTE, size=18, weight="bold"),
+            text_color=theme.COR_TEXTO,
+        ).grid(row=0, column=0, sticky="w")
+
+        # LEFT
+        left = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
+        left.grid(row=1, column=0, padx=(18, 10), pady=(0, 18), sticky="nsew")
+        left.grid_columnconfigure(0, weight=1)
+        left.grid_rowconfigure(2, weight=1)
+
+        filtros = ctk.CTkFrame(left, fg_color="transparent")
+        filtros.grid(row=0, column=0, padx=12, pady=(12, 8), sticky="ew")
+        filtros.grid_columnconfigure(0, weight=1)
+
+        ent = ctk.CTkEntry(
+            filtros,
+            textvariable=self.termo_var,
+            placeholder_text="🔎 Buscar por nome/ID externo…",
+            height=34,
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        )
+        ent.grid(row=0, column=0, sticky="ew")
+        ent.bind("<KeyRelease>", lambda e: self._render())
+
+        combo = ctk.CTkComboBox(
+            filtros,
+            values=["Todos", "Disponível", "Em rota", "Manutenção"],
+            width=160,
+            variable=self.status_filtro_var,
+            command=lambda _: self._render(),
+            fg_color=theme.COR_BOTAO,
+            button_color=theme.COR_SELECIONADO,
+            button_hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            dropdown_fg_color=theme.COR_BOTAO,
+            dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        )
+        combo.set("Todos")
+        combo.grid(row=0, column=1, padx=(10, 0))
+
+        ctk.CTkLabel(
+            left,
+            text="Lista",
+            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
+            text_color=theme.COR_TEXTO,
+        ).grid(row=1, column=0, padx=12, pady=(0, 6), sticky="w")
+
+        self._frame_tree = ctk.CTkFrame(left, fg_color=theme.COR_BOTAO, corner_radius=12)
+        self._frame_tree.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="nsew")
+        self._frame_tree.grid_columnconfigure(0, weight=1)
+        self._frame_tree.grid_rowconfigure(0, weight=1)
+        self._frame_tree.bind("<Configure>", self._ajustar_colunas_tree)
+
+        self.tree = ttk.Treeview(
+            self._frame_tree,
+            columns=("idext", "status", "cap"),
+            show="headings",
+            style="Geladoce.Treeview",
+        )
+        self.tree.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
+
+        self.tree.heading("idext", text="ID Externo", anchor="w")
+        self.tree.heading("status", text="Status", anchor="w")
+        self.tree.heading("cap", text="Capacidade", anchor="w")
+        self.tree.bind("<Double-1>", lambda e: self._carregar_edicao())
+
+        scroll = ttk.Scrollbar(self._frame_tree, orient="vertical", command=self.tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns", padx=(8, 8), pady=8)
+        self.tree.configure(yscrollcommand=scroll.set)
+
+        # RIGHT
+        right = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
+        right.grid(row=1, column=1, padx=(10, 18), pady=(0, 18), sticky="nsew")
+        right.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            right,
+            text="Novo / Editar",
+            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
+            text_color=theme.COR_TEXTO,
+        ).grid(row=0, column=0, padx=12, pady=(12, 6), sticky="w")
+
+        form = ctk.CTkFrame(right, fg_color=theme.COR_BOTAO, corner_radius=12)
+        form.grid(row=1, column=0, padx=12, pady=(0, 10), sticky="ew")
+        form.grid_columnconfigure(0, weight=1)
+        form.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(form, text="ID externo (opcional)", text_color=theme.COR_TEXTO).grid(
+            row=0, column=0, padx=10, pady=(10, 4), sticky="w"
+        )
+        ctk.CTkLabel(form, text="Status", text_color=theme.COR_TEXTO).grid(
+            row=0, column=1, padx=10, pady=(10, 4), sticky="w"
+        )
+
+        ctk.CTkEntry(
+            form,
+            textvariable=self.id_externo_var,
+            height=34,
+            placeholder_text="CAR-0001 (vazio = automático)",
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        ).grid(row=1, column=0, padx=10, pady=(0, 8), sticky="ew")
+
+        ctk.CTkComboBox(
+            form,
+            values=["Disponível", "Em rota", "Manutenção"],
+            variable=self.status_var,
+            height=34,
+            fg_color=theme.COR_BOTAO,
+            button_color=theme.COR_SELECIONADO,
+            button_hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            dropdown_fg_color=theme.COR_BOTAO,
+            dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        ).grid(row=1, column=1, padx=10, pady=(0, 8), sticky="ew")
+
+        ctk.CTkLabel(form, text="Nome", text_color=theme.COR_TEXTO).grid(
+            row=2, column=0, padx=10, pady=(6, 4), sticky="w"
+        )
+        ctk.CTkLabel(form, text="Capacidade", text_color=theme.COR_TEXTO).grid(
+            row=2, column=1, padx=10, pady=(6, 4), sticky="w"
+        )
+
+        ctk.CTkEntry(
+            form,
+            textvariable=self.nome_var,
+            height=34,
+            placeholder_text="Ex.: Carrinho Picolé",
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        ).grid(row=3, column=0, padx=10, pady=(0, 8), sticky="ew")
+
+        ctk.CTkEntry(
+            form,
+            textvariable=self.capacidade_var,
+            height=34,
+            placeholder_text="0",
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        ).grid(row=3, column=1, padx=10, pady=(0, 8), sticky="ew")
+
+        ctk.CTkLabel(form, text="Quantidade (cadastro em lote)", text_color=theme.COR_TEXTO).grid(
+            row=4, column=0, padx=10, pady=(6, 4), sticky="w"
+        )
+        ctk.CTkEntry(
+            form,
+            textvariable=self.qtd_lote_var,
+            height=34,
+            placeholder_text="1",
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        ).grid(row=5, column=0, padx=10, pady=(0, 10), sticky="ew")
+
+        linha_btns = ctk.CTkFrame(right, fg_color="transparent")
+        linha_btns.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
+        linha_btns.grid_columnconfigure(0, weight=1)
+        linha_btns.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(
+            linha_btns,
+            text="Salvar",
+            height=36,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+            command=self._salvar,
+        ).grid(row=0, column=0, padx=(0, 6), sticky="ew")
+
+        ctk.CTkButton(
+            linha_btns,
+            text="Limpar",
+            height=36,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+            command=self._limpar,
+        ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
+
+        ctk.CTkButton(
+            right,
+            text="Inativar selecionado",
+            height=36,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+            command=self._inativar,
+        ).grid(row=3, column=0, padx=12, pady=(0, 12), sticky="ew")
+
+    def _ajustar_colunas_tree(self, event=None):
+        if not self.tree or not self._frame_tree:
+            return
+        largura = max(self._frame_tree.winfo_width() - 28, 340)
+        c1 = int(largura * 0.45)
+        c2 = int(largura * 0.30)
+        c3 = max(largura - c1 - c2, 80)
+        self.tree.column("idext", width=c1, anchor="w")
+        self.tree.column("status", width=c2, anchor="w")
+        self.tree.column("cap", width=c3, anchor="w")
+
+    def _listar(self):
+        if not self.sistema:
+            return []
+        try:
+            return self.sistema.listar_carrinhos(
+                termo=self.termo_var.get().strip(),
+                status=self.status_filtro_var.get().strip()
+            )
+        except Exception:
+            return []
+
+    def _render(self):
+        if not self.tree:
+            return
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+
+        itens = self._listar()
+        for c in itens:
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    c.get("id_externo") or "",   # id_externo pode ser None
+                    c.get("status") or "",
+                    c.get("capacidade") or 0
+                ),
+                tags=(f'id-{c.get("id")}',)
+            )
+
+    def _id_selecionado(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        tags = self.tree.item(sel[0], "tags")
+        for t in tags:
+            if str(t).startswith("id-"):
+                return int(str(t).split("-")[1])
+        return None
+
+    def _carregar_edicao(self):
+        cid = self._id_selecionado()
+        if cid is None or not self.sistema:
+            return
+        try:
+            c = self.sistema.obter_carrinho(cid)
+        except Exception:
+            c = None
+        if not c:
+            return
+
+        self._em_edicao_id = cid
+        self.id_externo_var.set(c.get("id_externo") or "")
+        self.nome_var.set(c.get("nome") or "")
+        self.capacidade_var.set(str(c.get("capacidade") or 0))
+        self.status_var.set(c.get("status") or "Disponível")
+        self.qtd_lote_var.set("1")
+
+    def _salvar(self):
+        if not self.sistema:
+            return
+
+        nome = self.nome_var.get().strip()
+        if not nome:
+            messagebox.showwarning("Validação", "Informe o nome do carrinho.")
+            return
+
+        try:
+            cap = int(self.capacidade_var.get().strip() or "0")
+        except ValueError:
+            messagebox.showwarning("Validação", "Capacidade inválida.")
+            return
+
+        st = self.status_var.get().strip()
+
+        # ✅ REGRA CRÍTICA: nunca enviar "" para id_externo
+        idext = self.id_externo_var.get().strip() or None
+
+        try:
+            qtd = int(self.qtd_lote_var.get().strip() or "1")
+            if qtd <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("Validação", "Quantidade inválida.")
+            return
+
+        try:
+            if self._em_edicao_id is not None:
+                # edição: se idext=None, mantém o atual no repo/service
+                self.sistema.salvar_carrinho(
+                    nome=nome,
+                    capacidade=cap,
+                    status=st,
+                    id_externo=idext,
+                    carrinho_id=self._em_edicao_id
+                )
+            else:
+                # ✅ cadastro em lote: SEMPRE gerar automático para evitar duplicidade
+                if qtd > 1 and idext is not None:
+                    messagebox.showwarning(
+                        "Aviso",
+                        "Cadastro em lote: o ID externo deve ficar vazio para gerar automaticamente.\n"
+                        "O sistema vai gerar CAR-0001, CAR-0002, ..."
+                    )
+                for _ in range(qtd):
+                    self.sistema.salvar_carrinho(
+                        nome=nome,
+                        capacidade=cap,
+                        status=st,
+                        id_externo=None,     # <<< aqui está a correção principal
+                        carrinho_id=None
+                    )
+
+            self._render()
+            self._limpar()
+
+            if callable(self.on_changed):
+                self.on_changed()
+
+            messagebox.showinfo("Carrinhos", "Carrinho(s) salvo(s) com sucesso!")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao salvar carrinho(s).\n\n{e}")
+
+    def _inativar(self):
+        cid = self._id_selecionado()
+        if cid is None or not self.sistema:
+            messagebox.showwarning("Inativar", "Selecione um carrinho na lista.")
+            return
+        if not messagebox.askyesno("Confirmar", "Deseja inativar este carrinho?"):
+            return
+        try:
+            self.sistema.excluir_carrinho(cid)
+            self._render()
+            self._limpar()
+
+            if callable(self.on_changed):
+                self.on_changed()
+
+            messagebox.showinfo("Carrinhos", "Carrinho inativado.")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao inativar.\n\n{e}")
+
+    def _limpar(self):
+        self._em_edicao_id = None
+        self.id_externo_var.set("")
+        self.nome_var.set("")
+        self.capacidade_var.set("0")
+        self.status_var.set("Disponível")
+        self.qtd_lote_var.set("1")
+
+
+# ===========================================================
+# ABA EXTRA: CRUD MOTORISTAS
+# ===========================================================
+class PaginaCadastroMotoristas(ctk.CTkFrame):
+    def __init__(self, master, sistema=None, on_changed=None):
+        super().__init__(master, fg_color=theme.COR_FUNDO)
+        _ensure_tree_styles()
+
+        self.sistema = sistema
+        self.on_changed = on_changed
+
+        self.grid_columnconfigure(0, weight=3)
+        self.grid_columnconfigure(1, weight=2)
+        self.grid_rowconfigure(1, weight=1)
+
+        self.termo_var = ctk.StringVar(value="")
+
+        self.nome_var = ctk.StringVar(value="")
+        self.cpf_var = ctk.StringVar(value="")
+        self.tel_var = ctk.StringVar(value="")
+
+        self._em_edicao_id = None
+        self.tree = None
+        self._frame_tree = None
+
+        self._montar_ui()
+        self._render()
+
+    def _montar_ui(self):
+        topo = ctk.CTkFrame(self, fg_color="transparent")
+        topo.grid(row=0, column=0, columnspan=2, padx=18, pady=(14, 10), sticky="ew")
+        topo.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            topo,
+            text="Motoristas (externos)",
+            font=ctk.CTkFont(family=theme.FONTE, size=18, weight="bold"),
+            text_color=theme.COR_TEXTO,
+        ).grid(row=0, column=0, sticky="w")
+
+        left = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
+        left.grid(row=1, column=0, padx=(18, 10), pady=(0, 18), sticky="nsew")
+        left.grid_columnconfigure(0, weight=1)
+        left.grid_rowconfigure(2, weight=1)
+
+        filtros = ctk.CTkFrame(left, fg_color="transparent")
+        filtros.grid(row=0, column=0, padx=12, pady=(12, 8), sticky="ew")
+        filtros.grid_columnconfigure(0, weight=1)
+
+        ent = ctk.CTkEntry(
+            filtros,
+            textvariable=self.termo_var,
+            placeholder_text="🔎 Buscar por nome/CPF/telefone…",
+            height=34,
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        )
+        ent.grid(row=0, column=0, sticky="ew")
+        ent.bind("<KeyRelease>", lambda e: self._render())
+
+        ctk.CTkLabel(
+            left,
+            text="Lista",
+            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
+            text_color=theme.COR_TEXTO,
+        ).grid(row=1, column=0, padx=12, pady=(0, 6), sticky="w")
+
+        self._frame_tree = ctk.CTkFrame(left, fg_color=theme.COR_BOTAO, corner_radius=12)
+        self._frame_tree.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="nsew")
+        self._frame_tree.grid_columnconfigure(0, weight=1)
+        self._frame_tree.grid_rowconfigure(0, weight=1)
+        self._frame_tree.bind("<Configure>", self._ajustar_colunas_tree)
+
+        self.tree = ttk.Treeview(
+            self._frame_tree,
+            columns=("cpf", "tel"),
+            show="tree headings",
+            style="Geladoce.Treeview",
+        )
+        self.tree.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
+
+        self.tree.heading("#0", text="Nome", anchor="w")
+        self.tree.heading("cpf", text="CPF", anchor="w")
+        self.tree.heading("tel", text="Telefone", anchor="w")
+        self.tree.bind("<Double-1>", lambda e: self._carregar_edicao())
+
+        scroll = ttk.Scrollbar(self._frame_tree, orient="vertical", command=self.tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns", padx=(8, 8), pady=8)
+        self.tree.configure(yscrollcommand=scroll.set)
+
+        right = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
+        right.grid(row=1, column=1, padx=(10, 18), pady=(0, 18), sticky="nsew")
+        right.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            right,
+            text="Novo / Editar",
+            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
+            text_color=theme.COR_TEXTO,
+        ).grid(row=0, column=0, padx=12, pady=(12, 6), sticky="w")
+
+        form = ctk.CTkFrame(right, fg_color=theme.COR_BOTAO, corner_radius=12)
+        form.grid(row=1, column=0, padx=12, pady=(0, 10), sticky="ew")
+        form.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(form, text="Nome", text_color=theme.COR_TEXTO).grid(
+            row=0, column=0, padx=10, pady=(10, 4), sticky="w"
+        )
+        ctk.CTkEntry(
+            form,
+            textvariable=self.nome_var,
+            height=34,
+            placeholder_text="Nome do motorista",
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        ).grid(row=1, column=0, padx=10, pady=(0, 8), sticky="ew")
+
+        ctk.CTkLabel(form, text="CPF (11 dígitos)", text_color=theme.COR_TEXTO).grid(
+            row=2, column=0, padx=10, pady=(6, 4), sticky="w"
+        )
+        ctk.CTkEntry(
+            form,
+            textvariable=self.cpf_var,
+            height=34,
+            placeholder_text="Somente números",
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        ).grid(row=3, column=0, padx=10, pady=(0, 8), sticky="ew")
+
+        ctk.CTkLabel(form, text="Telefone", text_color=theme.COR_TEXTO).grid(
+            row=4, column=0, padx=10, pady=(6, 4), sticky="w"
+        )
+        ctk.CTkEntry(
+            form,
+            textvariable=self.tel_var,
+            height=34,
+            placeholder_text="(xx) xxxxx-xxxx",
+            fg_color=theme.COR_BOTAO,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+        ).grid(row=5, column=0, padx=10, pady=(0, 10), sticky="ew")
+
+        linha_btns = ctk.CTkFrame(right, fg_color="transparent")
+        linha_btns.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
+        linha_btns.grid_columnconfigure(0, weight=1)
+        linha_btns.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(
+            linha_btns,
+            text="Salvar",
+            height=36,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+            command=self._salvar,
+        ).grid(row=0, column=0, padx=(0, 6), sticky="ew")
+
+        ctk.CTkButton(
+            linha_btns,
+            text="Limpar",
+            height=36,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+            command=self._limpar,
+        ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
+
+        ctk.CTkButton(
+            right,
+            text="Inativar selecionado",
+            height=36,
+            fg_color=theme.COR_BOTAO,
+            hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
+            command=self._inativar,
+        ).grid(row=3, column=0, padx=12, pady=(0, 12), sticky="ew")
+
+    def _ajustar_colunas_tree(self, event=None):
+        if not self.tree or not self._frame_tree:
+            return
+        largura = max(self._frame_tree.winfo_width() - 28, 380)
+        c0 = int(largura * 0.45)
+        c1 = int(largura * 0.25)
+        c2 = max(largura - c0 - c1, 120)
+        self.tree.column("#0", width=c0, anchor="w")
+        self.tree.column("cpf", width=c1, anchor="w")
+        self.tree.column("tel", width=c2, anchor="w")
+
+    def _listar(self):
+        if not self.sistema:
+            return []
+        try:
+            return self.sistema.listar_motoristas(termo=self.termo_var.get().strip())
+        except Exception:
+            return []
+
+    def _render(self):
+        if not self.tree:
+            return
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+
+        itens = self._listar()
+        for m in itens:
+            self.tree.insert(
+                "",
+                "end",
+                text=m.get("nome", "") or "",
+                values=(m.get("cpf", "") or "", m.get("telefone", "") or ""),
+                tags=(f'id-{m.get("id")}',)
+            )
+
+    def _id_selecionado(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        tags = self.tree.item(sel[0], "tags")
+        for t in tags:
+            if str(t).startswith("id-"):
+                return int(str(t).split("-")[1])
+        return None
+
+    def _carregar_edicao(self):
+        mid = self._id_selecionado()
+        if mid is None or not self.sistema:
+            return
+        try:
+            m = self.sistema.obter_motorista(mid)
+        except Exception:
+            m = None
+        if not m:
+            return
+
+        self._em_edicao_id = mid
+        self.nome_var.set(m.get("nome", "") or "")
+        self.cpf_var.set(m.get("cpf", "") or "")
+        self.tel_var.set(m.get("telefone", "") or "")
+
+    def _salvar(self):
+        if not self.sistema:
+            return
+
+        nome = self.nome_var.get().strip()
+        cpf = _digits(self.cpf_var.get())
+        tel = self.tel_var.get().strip()
+
+        if not nome:
+            messagebox.showwarning("Validação", "Informe o nome.")
+            return
+        if len(cpf) != 11:
+            messagebox.showwarning("Validação", "CPF inválido (11 dígitos).")
+            return
+        if not tel:
+            messagebox.showwarning("Validação", "Informe o telefone.")
+            return
+
+        try:
+            self.sistema.salvar_motorista(
+                nome=nome,
+                cpf=cpf,
+                telefone=tel,
+                motorista_id=self._em_edicao_id
+            )
+            self._render()
+            self._limpar()
+
+            if callable(self.on_changed):
+                self.on_changed()
+
+            messagebox.showinfo("Motoristas", "Motorista salvo com sucesso!")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao salvar motorista.\n\n{e}")
+
+    def _inativar(self):
+        mid = self._id_selecionado()
+        if mid is None or not self.sistema:
+            messagebox.showwarning("Inativar", "Selecione um motorista na lista.")
+            return
+        if not messagebox.askyesno("Confirmar", "Deseja inativar este motorista?"):
+            return
+        try:
+            self.sistema.excluir_motorista(mid)
+            self._render()
+            self._limpar()
+
+            if callable(self.on_changed):
+                self.on_changed()
+
+            messagebox.showinfo("Motoristas", "Motorista inativado.")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao inativar.\n\n{e}")
+
+    def _limpar(self):
+        self._em_edicao_id = None
+        self.nome_var.set("")
+        self.cpf_var.set("")
+        self.tel_var.set("")
+
+
+# ===========================================================
 # ABA 1: AGENDAMENTOS
 # ===========================================================
 class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
     """
-    Tela de agendamento de carrinhos de picolé.
-
-    - Esquerda: filtros + lista de carrinhos
-    - Direita: formulário de agendamento
+    - Esquerda: filtros + lista de carrinhos (duplo clique = preferir)
+    - Direita: formulário (quantidade + motorista opcional)
     """
 
-    def __init__(self, master, on_open_agenda=None, on_agenda_changed=None):
+    def __init__(self, master, sistema=None, on_open_agenda=None, on_agenda_changed=None):
         super().__init__(master, fg_color=theme.COR_FUNDO)
+        _ensure_tree_styles()
 
+        self.sistema = sistema
         self.on_open_agenda = on_open_agenda
         self.on_agenda_changed = on_agenda_changed
 
@@ -36,7 +874,6 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=2, uniform="ag_cols")
         self.grid_rowconfigure(0, weight=1)
 
-        # --------- Estado ---------
         self.busca_carrinho_var = ctk.StringVar(value="")
         self.status_carrinho_var = ctk.StringVar(value="Todos")
 
@@ -46,24 +883,274 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         self.hora_fim_var = ctk.StringVar(value="12:00")
         self.local_var = ctk.StringVar(value="")
         self.status_ag_var = ctk.StringVar(value="Agendado")
-        self.motorista_var = ctk.StringVar(value="")
-        self.observacoes_widget = None
 
+        self.qtd_carrinhos_var = ctk.StringVar(value="1")
+        self.motorista_var = ctk.StringVar(value="(sem motorista)")
+
+        self.observacoes_widget = None
         self._agendamento_em_edicao_id = None
 
-        self.carrinhos = self._mock_carrinhos()
-        self.funcionarios = self._mock_funcionarios()
-        self.agendamentos = self._mock_agendamentos()
+        self.carrinhos = []
+        self.motoristas = []
+        self.agendamentos = []
 
         self.tree_carrinhos = None
         self._frame_tree_carrinhos = None
 
+        self._carregar_dados_operacionais()
+
         self._painel_carrinhos_ui()
         self._form_agendamento_ui()
 
+        self._atualizar_combos_operacionais()
         self._render_lista_carrinhos()
 
-    # -------------------- PAINEL ESQ --------------------
+    def _obter_metodo_sistema(self, *nomes):
+        if not self.sistema:
+            return None
+        for nome in nomes:
+            metodo = getattr(self.sistema, nome, None)
+            if callable(metodo):
+                return metodo
+        return None
+
+    def _listar_carrinhos_sistema(self):
+        metodo = self._obter_metodo_sistema("listar_carrinhos")
+        if not metodo:
+            return False, []
+        try:
+            itens = metodo(termo="", status="Todos")
+        except TypeError:
+            try:
+                itens = metodo()
+            except Exception:
+                return True, []
+        except Exception:
+            return True, []
+
+        if not isinstance(itens, list):
+            return True, []
+
+        normalizados = []
+        for c in itens:
+            if not isinstance(c, dict):
+                continue
+            try:
+                cid = int(c.get("id"))
+            except Exception:
+                continue
+            normalizados.append({
+                "id": cid,
+                "id_externo": str(c.get("id_externo") or f"CAR-{cid:04d}"),
+                "nome": str(c.get("nome") or f"Carrinho {cid}"),
+                "capacidade": int(c.get("capacidade", 0) or 0),
+                "status": str(c.get("status") or "Disponível"),
+            })
+        return True, normalizados
+
+    def _listar_motoristas_sistema(self):
+        metodo = self._obter_metodo_sistema("listar_motoristas")
+        if not metodo:
+            return False, []
+        try:
+            itens = metodo(termo="")
+        except TypeError:
+            try:
+                itens = metodo()
+            except Exception:
+                return True, []
+        except Exception:
+            return True, []
+
+        if not isinstance(itens, list):
+            return True, []
+
+        normalizados = []
+        for m in itens:
+            if not isinstance(m, dict):
+                continue
+            try:
+                mid = int(m.get("id"))
+            except Exception:
+                continue
+            normalizados.append({
+                "id": mid,
+                "nome": str(m.get("nome") or f"Motorista {mid}"),
+                "telefone": str(m.get("telefone") or ""),
+                "cpf": str(m.get("cpf") or ""),
+            })
+        return True, normalizados
+
+    def _parse_data_agendamento(self, valor):
+        if isinstance(valor, dt.date):
+            return valor
+        if isinstance(valor, str):
+            txt = valor.strip()
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+                try:
+                    return dt.datetime.strptime(txt, fmt).date()
+                except ValueError:
+                    pass
+        return None
+
+    def _listar_agendamentos_sistema(self):
+        metodo = self._obter_metodo_sistema("listar_agendamentos")
+        if not metodo:
+            return False, []
+        try:
+            itens = metodo(data=self.data_var.get().strip())
+        except TypeError:
+            try:
+                itens = metodo()
+            except Exception:
+                return True, []
+        except Exception:
+            return True, []
+
+        if not isinstance(itens, list):
+            return True, []
+
+        normalizados = []
+        for a in itens:
+            if not isinstance(a, dict):
+                continue
+
+            data_obj = self._parse_data_agendamento(a.get("data"))
+            if not data_obj:
+                continue
+
+            inicio = str(a.get("inicio") or "08:00")
+            fim = str(a.get("fim") or "12:00")
+
+            inicio_min = self._parse_hora(inicio)
+            fim_min = self._parse_hora(fim)
+            if inicio_min is None or fim_min is None:
+                continue
+
+            try:
+                aid = int(a.get("id"))
+            except Exception:
+                continue
+
+            try:
+                carrinho_id = int(a.get("carrinho_id")) if a.get("carrinho_id") is not None else None
+            except Exception:
+                carrinho_id = None
+
+            try:
+                motorista_id = int(a.get("motorista_id")) if a.get("motorista_id") is not None else None
+            except Exception:
+                motorista_id = None
+
+            qtd_carrinhos = int(a.get("qtd_carrinhos") or 1)
+            carrinhos_texto = str(a.get("carrinhos_texto") or "")
+
+            carrinho = next((c for c in self.carrinhos if c["id"] == carrinho_id), None)
+            motorista = next((m for m in self.motoristas if m["id"] == motorista_id), None)
+
+            normalizados.append({
+                "id": aid,
+                "data": data_obj,
+                "inicio": inicio,
+                "fim": fim,
+                "inicio_min": inicio_min,
+                "fim_min": fim_min,
+                "carrinho_id": carrinho_id,
+                "carrinho_nome": (carrinho["nome"] if carrinho else str(a.get("carrinho_nome") or "")),
+                "carrinho_id_externo": (carrinho["id_externo"] if carrinho else str(a.get("carrinho_id_externo") or "")),
+                "qtd_carrinhos": qtd_carrinhos,
+                "carrinhos_texto": carrinhos_texto,
+                "motorista_id": motorista_id,
+                "motorista_nome": (motorista["nome"] if motorista else str(a.get("motorista_nome") or "")),
+                "local": str(a.get("local") or ""),
+                "status": str(a.get("status") or "Agendado"),
+                "obs": str(a.get("obs") or ""),
+            })
+
+        return True, normalizados
+
+    def _carregar_dados_operacionais(self):
+        ok_car, carrinhos = self._listar_carrinhos_sistema()
+        if ok_car or not self.carrinhos:
+            self.carrinhos = carrinhos
+
+        ok_mot, motos = self._listar_motoristas_sistema()
+        if ok_mot or not self.motoristas:
+            self.motoristas = motos
+
+        ok_ag, ags = self._listar_agendamentos_sistema()
+        if ok_ag or not self.agendamentos:
+            self.agendamentos = ags
+
+    def _atualizar_combos_operacionais(self):
+        if hasattr(self, "combo_carrinho"):
+            atual = self.combo_carrinho.get().strip()
+            opcoes = ["(auto selecionar)"] + [f'{c["nome"]} ({c["id_externo"]})' for c in self.carrinhos]
+            self.combo_carrinho.configure(values=opcoes)
+            self.combo_carrinho.set(atual if atual in opcoes else opcoes[0])
+
+        if hasattr(self, "combo_motorista"):
+            atual = self.combo_motorista.get().strip()
+            opcoes = ["(sem motorista)"] + [f'{m["nome"]} • {m["telefone"]}' for m in self.motoristas]
+            self.combo_motorista.configure(values=opcoes)
+            self.combo_motorista.set(atual if atual in opcoes else opcoes[0])
+
+    def _salvar_agendamento_no_sistema(self, payload):
+        """
+        Salva agendamento usando SistemaService.salvar_agendamento()
+        com os parâmetros corretos.
+        """
+        metodo = self._obter_metodo_sistema("salvar_agendamento")
+        if not metodo:
+            return False, "SistemaService não expõe salvar_agendamento."
+
+        data_txt = payload["data"].strftime("%Y-%m-%d")
+        try:
+            metodo(
+                data=data_txt,
+                hora_inicio=payload["inicio"],
+                hora_fim=payload["fim"],
+                carrinho_id=payload.get("carrinho_preferido_id") or 1,  # ID padrão se não houver
+                funcionario_id=payload.get("motorista_id") or 1,  # ID padrão se não houver
+                local=payload["local"],
+                status=payload["status"],
+                observacao=payload["obs"],
+                agendamento_id=self._agendamento_em_edicao_id,
+                quantidade_carrinhos=payload.get("quantidade_carrinhos", 1),
+                carrinhos_texto=payload.get("carrinhos_texto", ""),
+            )
+            return True, ""
+        except TypeError as e:
+            # Se houver erro de tipo, tenta com menos parâmetros (compatibilidade)
+            try:
+                metodo(
+                    data=data_txt,
+                    hora_inicio=payload["inicio"],
+                    hora_fim=payload["fim"],
+                    carrinho_id=payload.get("carrinho_preferido_id") or 1,
+                    funcionario_id=payload.get("motorista_id") or 1,
+                    local=payload["local"],
+                    status=payload["status"],
+                    observacao=payload["obs"],
+                    agendamento_id=self._agendamento_em_edicao_id,
+                )
+                return True, ""
+            except Exception as e2:
+                return False, f"Erro ao salvar: {str(e2)}"
+        except Exception as e:
+            return False, str(e)
+
+    def _remover_agendamento_do_sistema(self, aid):
+        metodo = self._obter_metodo_sistema("excluir_agendamento", "remover_agendamento")
+        if not metodo:
+            return False
+        try:
+            metodo(aid)
+            return True
+        except Exception:
+            return False
+
+    # -------------------- UI ESQ --------------------
     def _painel_carrinhos_ui(self):
         box = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
         box.grid(row=0, column=0, padx=(30, 12), pady=(10, 20), sticky="nsew")
@@ -73,7 +1160,6 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         filtros = ctk.CTkFrame(box, fg_color="transparent")
         filtros.grid(row=0, column=0, padx=12, pady=(12, 8), sticky="ew")
         filtros.grid_columnconfigure(0, weight=1)
-        filtros.grid_columnconfigure(1, weight=0)
 
         self.entry_busca_car = ctk.CTkEntry(
             filtros,
@@ -108,36 +1194,10 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
 
         ctk.CTkLabel(
             box,
-            text="Carrinhos",
+            text="Carrinhos (duplo clique = preferir)",
             font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
             text_color=theme.COR_TEXTO
         ).grid(row=1, column=0, padx=12, pady=(0, 4), sticky="w")
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
-            "Geladoce.Treeview",
-            font=(theme.FONTE, 11),
-            rowheight=34,
-            background=theme.COR_BOTAO,
-            fieldbackground=theme.COR_BOTAO,
-            foreground=theme.COR_TEXTO,
-            borderwidth=0,
-            relief="flat"
-        )
-        style.configure(
-            "Geladoce.Treeview.Heading",
-            font=(theme.FONTE, 11, "bold"),
-            background=theme.COR_PAINEL,
-            foreground=theme.COR_TEXTO,
-            borderwidth=0,
-            relief="flat"
-        )
-        style.map(
-            "Geladoce.Treeview",
-            background=[("selected", theme.COR_SELECIONADO)],
-            foreground=[("selected", theme.COR_TEXTO)]
-        )
 
         self._frame_tree_carrinhos = ctk.CTkFrame(box, fg_color=theme.COR_BOTAO, corner_radius=12)
         self._frame_tree_carrinhos.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="nsew")
@@ -149,7 +1209,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
             self._frame_tree_carrinhos,
             columns=("status", "capacidade"),
             show="tree headings",
-            style="Geladoce.Treeview"
+            style="Geladoce.Agenda.Treeview",
         )
         self.tree_carrinhos.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
 
@@ -163,15 +1223,10 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
 
         self.tree_carrinhos.bind("<Double-1>", lambda e: self._usar_carrinho_selecionado())
 
-        self.tree_carrinhos.tag_configure("Disponível", foreground=theme.COR_SUCESSO)
-        self.tree_carrinhos.tag_configure("Em rota", foreground="#EF6C00")
-        self.tree_carrinhos.tag_configure("Manutenção", foreground=theme.COR_TEXTO_SEC)
-
-    # -------------------- FORMULÁRIO --------------------
+    # -------------------- UI DIR --------------------
     def _form_agendamento_ui(self):
         box = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
         box.grid(row=0, column=1, padx=(12, 30), pady=(10, 24), sticky="nsew")
-
         box.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
@@ -185,73 +1240,31 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         linha_data.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="ew")
         linha_data.grid_columnconfigure(1, weight=1)
 
-        btn_prev = ctk.CTkButton(
-            linha_data,
-            text="←",
-            width=38,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
+        ctk.CTkButton(
+            linha_data, text="←", width=38, height=34,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
             command=lambda: self._navegar_data(-1)
-        )
-        btn_prev.grid(row=0, column=0, padx=(0, 6))
+        ).grid(row=0, column=0, padx=(0, 6))
 
-        entry_data = ctk.CTkEntry(
-            linha_data,
-            textvariable=self.data_var,
-            height=34,
-            placeholder_text="AAAA-MM-DD",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        entry_data.grid(row=0, column=1, sticky="ew")
+        ctk.CTkEntry(
+            linha_data, textvariable=self.data_var, height=34, placeholder_text="AAAA-MM-DD",
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
+        ).grid(row=0, column=1, sticky="ew")
 
-        btn_next = ctk.CTkButton(
-            linha_data,
-            text="→",
-            width=38,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
+        ctk.CTkButton(
+            linha_data, text="→", width=38, height=34,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
             command=lambda: self._navegar_data(1)
-        )
-        btn_next.grid(row=0, column=2, padx=(6, 0))
+        ).grid(row=0, column=2, padx=(6, 0))
 
-        btn_hoje = ctk.CTkButton(
-            linha_data,
-            text="Hoje",
-            width=70,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
+        ctk.CTkButton(
+            linha_data, text="Hoje", width=70, height=34,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
             command=lambda: self._set_data(dt.date.today())
-        )
-        btn_hoje.grid(row=0, column=3, padx=(8, 0))
-
-        btn_amanha = ctk.CTkButton(
-            linha_data,
-            text="Amanhã",
-            width=80,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
-            command=lambda: self._set_data(dt.date.today() + dt.timedelta(days=1))
-        )
-        btn_amanha.grid(row=0, column=4, padx=(6, 0))
+        ).grid(row=0, column=3, padx=(8, 0))
 
         form = ctk.CTkFrame(box, fg_color=theme.COR_BOTAO, corner_radius=12)
         form.grid(row=2, column=0, padx=16, pady=(0, 8), sticky="ew")
@@ -261,202 +1274,114 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         ctk.CTkLabel(form, text="Início (HH:MM)", text_color=theme.COR_TEXTO).grid(row=0, column=0, padx=10, pady=(12, 4), sticky="w")
         ctk.CTkLabel(form, text="Fim (HH:MM)", text_color=theme.COR_TEXTO).grid(row=0, column=1, padx=10, pady=(12, 4), sticky="w")
 
-        combo_ini = ctk.CTkComboBox(
-            form,
-            values=self._horarios_padrao(),
-            variable=self.hora_ini_var,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        combo_ini.grid(row=1, column=0, padx=10, pady=(0, 8), sticky="ew")
+        ctk.CTkComboBox(
+            form, values=self._horarios_padrao(), variable=self.hora_ini_var, height=34,
+            fg_color=theme.COR_BOTAO, button_color=theme.COR_SELECIONADO, button_hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO, dropdown_fg_color=theme.COR_BOTAO, dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
+        ).grid(row=1, column=0, padx=10, pady=(0, 8), sticky="ew")
 
-        combo_fim = ctk.CTkComboBox(
-            form,
-            values=self._horarios_padrao(),
-            variable=self.hora_fim_var,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        combo_fim.grid(row=1, column=1, padx=10, pady=(0, 8), sticky="ew")
+        ctk.CTkComboBox(
+            form, values=self._horarios_padrao(), variable=self.hora_fim_var, height=34,
+            fg_color=theme.COR_BOTAO, button_color=theme.COR_SELECIONADO, button_hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO, dropdown_fg_color=theme.COR_BOTAO, dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
+        ).grid(row=1, column=1, padx=10, pady=(0, 8), sticky="ew")
 
-        ctk.CTkLabel(form, text="Carrinho", text_color=theme.COR_TEXTO).grid(row=2, column=0, padx=10, pady=(6, 4), sticky="w")
-        ctk.CTkLabel(form, text="Responsável", text_color=theme.COR_TEXTO).grid(row=2, column=1, padx=10, pady=(6, 4), sticky="w")
+        ctk.CTkLabel(form, text="Carrinho (opcional)", text_color=theme.COR_TEXTO).grid(row=2, column=0, padx=10, pady=(6, 4), sticky="w")
+        ctk.CTkLabel(form, text="Quantidade de carrinhos", text_color=theme.COR_TEXTO).grid(row=2, column=1, padx=10, pady=(6, 4), sticky="w")
 
         self.combo_carrinho = ctk.CTkComboBox(
-            form,
-            values=[f'{c["nome"]} ({c["id_externo"]})' for c in self.carrinhos],
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            form, values=["(auto selecionar)"], height=34,
+            fg_color=theme.COR_BOTAO, button_color=theme.COR_SELECIONADO, button_hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO, dropdown_fg_color=theme.COR_BOTAO, dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
         )
         self.combo_carrinho.grid(row=3, column=0, padx=10, pady=(0, 8), sticky="ew")
+        self.combo_carrinho.set("(auto selecionar)")
 
-        self.combo_motorista = ctk.CTkComboBox(
-            form,
-            values=[f'{f["nome"]} • {f["telefone"]}' for f in self.funcionarios],
-            variable=self.motorista_var,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        self.combo_motorista.grid(row=3, column=1, padx=10, pady=(0, 8), sticky="ew")
+        ctk.CTkEntry(
+            form, textvariable=self.qtd_carrinhos_var, height=34, placeholder_text="1",
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
+        ).grid(row=3, column=1, padx=10, pady=(0, 8), sticky="ew")
 
-        ctk.CTkLabel(form, text="Local / Evento", text_color=theme.COR_TEXTO).grid(row=4, column=0, padx=10, pady=(6, 4), sticky="w")
+        ctk.CTkLabel(form, text="Motorista (opcional)", text_color=theme.COR_TEXTO).grid(row=4, column=0, padx=10, pady=(6, 4), sticky="w")
         ctk.CTkLabel(form, text="Status", text_color=theme.COR_TEXTO).grid(row=4, column=1, padx=10, pady=(6, 4), sticky="w")
 
-        entry_local = ctk.CTkEntry(
-            form,
-            textvariable=self.local_var,
-            height=34,
-            placeholder_text="Ex.: Escola Alfa, Praça X, Bairro Y…",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+        self.combo_motorista = ctk.CTkComboBox(
+            form, values=["(sem motorista)"], variable=self.motorista_var, height=34,
+            fg_color=theme.COR_BOTAO, button_color=theme.COR_SELECIONADO, button_hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO, dropdown_fg_color=theme.COR_BOTAO, dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
         )
-        entry_local.grid(row=5, column=0, padx=10, pady=(0, 8), sticky="ew")
+        self.combo_motorista.grid(row=5, column=0, padx=10, pady=(0, 8), sticky="ew")
+        self.combo_motorista.set("(sem motorista)")
 
         self.combo_status_ag = ctk.CTkComboBox(
-            form,
-            values=["Agendado", "Confirmado", "Cancelado"],
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            form, values=["Agendado", "Confirmado", "Cancelado"], height=34,
+            fg_color=theme.COR_BOTAO, button_color=theme.COR_SELECIONADO, button_hover_color=theme.COR_HOVER,
+            text_color=theme.COR_TEXTO, dropdown_fg_color=theme.COR_BOTAO, dropdown_hover_color=theme.COR_HOVER,
+            dropdown_text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
         )
         self.combo_status_ag.set("Agendado")
         self.combo_status_ag.grid(row=5, column=1, padx=10, pady=(0, 8), sticky="ew")
 
-        ctk.CTkLabel(form, text="Observações", text_color=theme.COR_TEXTO).grid(row=6, column=0, columnspan=2, padx=10, pady=(6, 4), sticky="w")
+        ctk.CTkLabel(form, text="Local / Evento", text_color=theme.COR_TEXTO).grid(row=6, column=0, padx=10, pady=(6, 4), sticky="w")
+        ctk.CTkEntry(
+            form, textvariable=self.local_var, height=34,
+            placeholder_text="Ex.: Escola Alfa, Praça X…",
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
+        ).grid(row=7, column=0, padx=10, pady=(0, 8), sticky="ew")
 
+        ctk.CTkLabel(form, text="Observações", text_color=theme.COR_TEXTO).grid(row=8, column=0, columnspan=2, padx=10, pady=(6, 4), sticky="w")
         self.observacoes_widget = ctk.CTkTextbox(
-            form,
-            height=60,
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            form, height=60, fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO, border_width=1, border_color=theme.COR_HOVER
         )
-        self.observacoes_widget.grid(row=7, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="ew")
+        self.observacoes_widget.grid(row=9, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="ew")
 
-        # Botões
         linha_btns = ctk.CTkFrame(box, fg_color="transparent")
-        linha_btns.grid(row=3, column=0, padx=16, pady=(12, 24), sticky="ew")
+        linha_btns.grid(row=3, column=0, padx=16, pady=(12, 14), sticky="ew")
         linha_btns.grid_columnconfigure(0, weight=1)
         linha_btns.grid_columnconfigure(1, weight=1)
 
-        self.btn_salvar = ctk.CTkButton(
-            linha_btns,
-            text="Salvar agendamento",
-            height=38,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
-            command=self._salvar_agendamento
-        )
-        self.btn_salvar.grid(row=0, column=0, padx=(0, 6), sticky="ew")
-
-        btn_limpar = ctk.CTkButton(
-            linha_btns,
-            text="Limpar",
-            height=38,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
-            command=self._limpar_form
-        )
-        btn_limpar.grid(row=0, column=1, padx=(6, 0), sticky="ew")
-
-        # Botão para ir à aba da agenda
         ctk.CTkButton(
-            box,
-            text="Ir para aba Agenda do dia",
-            height=38,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
+            linha_btns, text="Salvar agendamento", height=38,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
+            command=self._salvar_agendamento
+        ).grid(row=0, column=0, padx=(0, 6), sticky="ew")
+
+        ctk.CTkButton(
+            linha_btns, text="Limpar", height=38,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
+            command=self._limpar_form
+        ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
+
+        ctk.CTkButton(
+            box, text="Ir para aba Agenda do dia", height=38,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
             command=self._abrir_aba_agenda
         ).grid(row=4, column=0, padx=16, pady=(0, 16), sticky="ew")
 
-    # -------------------- MOCKS --------------------
-    def _mock_carrinhos(self):
-        return [
-            {"id": 1, "id_externo": "CAR-01", "nome": "Carrinho 01", "capacidade": 250, "status": "Disponível"},
-            {"id": 2, "id_externo": "CAR-02", "nome": "Carrinho 02", "capacidade": 220, "status": "Em rota"},
-            {"id": 3, "id_externo": "CAR-03", "nome": "Carrinho 03", "capacidade": 260, "status": "Disponível"},
-            {"id": 4, "id_externo": "CAR-04", "nome": "Carrinho 04", "capacidade": 210, "status": "Manutenção"},
-        ]
-
-    def _mock_funcionarios(self):
-        return [
-            {"id": 1, "nome": "Carlos Lima", "telefone": "(91) 99999-0001"},
-            {"id": 2, "nome": "Ana Paula", "telefone": "(91) 98888-0002"},
-            {"id": 3, "nome": "Rogério Silva", "telefone": "(91) 97777-0003"},
-        ]
-
-    def _mock_agendamentos(self):
-        return []
-
-    # -------------------- AJUSTES DINÂMICOS TREEVIEWS --------------------
     def _ajustar_colunas_tree_carrinhos(self, event=None):
         if not self.tree_carrinhos or not self._frame_tree_carrinhos:
             return
-
         largura = max(self._frame_tree_carrinhos.winfo_width() - 28, 220)
         col0 = int(largura * 0.52)
         col1 = int(largura * 0.26)
         col2 = max(largura - col0 - col1, 80)
-
         self.tree_carrinhos.column("#0", width=col0, anchor="w")
         self.tree_carrinhos.column("status", width=col1, anchor="w")
         self.tree_carrinhos.column("capacidade", width=col2, anchor="w")
 
-    # -------------------- LISTA DE CARRINHOS --------------------
     def _render_lista_carrinhos(self):
         if not self.tree_carrinhos:
             return
+
+        self._carregar_dados_operacionais()
+        self._atualizar_combos_operacionais()
 
         for item in self.tree_carrinhos.get_children():
             self.tree_carrinhos.delete(item)
@@ -467,7 +1392,6 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         for carrinho in self.carrinhos:
             if status_filtro != "Todos" and carrinho["status"] != status_filtro:
                 continue
-
             texto_busca = f'{carrinho["nome"]} {carrinho["id_externo"]}'.lower()
             if termo and termo not in texto_busca:
                 continue
@@ -477,7 +1401,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
                 "end",
                 text=f'{carrinho["nome"]} ({carrinho["id_externo"]})',
                 values=(carrinho["status"], carrinho["capacidade"]),
-                tags=(carrinho["status"], f'id-{carrinho["id"]}')
+                tags=(f'id-{carrinho["id"]}',)
             )
 
     def _usar_carrinho_selecionado(self):
@@ -489,7 +1413,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         cid = None
         for t in tags:
             if str(t).startswith("id-"):
-                cid = int(t.split("-")[1])
+                cid = int(str(t).split("-")[1])
                 break
         if cid is None:
             return
@@ -497,10 +1421,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         car = next((x for x in self.carrinhos if x["id"] == cid), None)
         if not car:
             return
-
         self.combo_carrinho.set(f'{car["nome"]} ({car["id_externo"]})')
-        if self.funcionarios:
-            self.combo_motorista.set(f'{self.funcionarios[0]["nome"]} • {self.funcionarios[0]["telefone"]}')
 
     def _abrir_aba_agenda(self):
         if callable(self.on_open_agenda):
@@ -510,7 +1431,6 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         if callable(self.on_agenda_changed):
             self.on_agenda_changed()
 
-    # -------------------- FORMULÁRIO --------------------
     def _set_data(self, date_obj: dt.date):
         self.data_var.set(date_obj.strftime("%Y-%m-%d"))
         self._notificar_agenda()
@@ -544,80 +1464,61 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
     def _parse_hora(self, s: str):
         try:
             h, m = s.split(":")
-            h = int(h)
-            m = int(m)
+            h = int(h); m = int(m)
             if 0 <= h <= 23 and 0 <= m <= 59:
                 return h * 60 + m
         except Exception:
             return None
         return None
 
+    def _resolver_carrinho_preferido_id(self):
+        txt = self.combo_carrinho.get().strip()
+        if not txt or txt == "(auto selecionar)":
+            return None
+        for c in self.carrinhos:
+            if txt.startswith(c["nome"]) and c["id_externo"] in txt:
+                return int(c["id"])
+        return None
+
+    def _resolver_motorista_id(self):
+        txt = self.combo_motorista.get().strip()
+        if not txt or txt == "(sem motorista)":
+            return None
+        nome = txt.split("•")[0].strip()
+        for m in self.motoristas:
+            if m["nome"] == nome:
+                return int(m["id"])
+        return None
+
     def _validar_inputs(self):
         try:
             dt.date.fromisoformat(self.data_var.get().strip())
         except ValueError:
-            return False, "Data inválida. Use o formato AAAA-MM-DD."
+            return False, "Data inválida. Use AAAA-MM-DD."
 
         ini = self._parse_hora(self.hora_ini_var.get().strip())
         fim = self._parse_hora(self.hora_fim_var.get().strip())
         if ini is None or fim is None:
-            return False, "Horários inválidos. Use HH:MM (ex.: 08:00)."
+            return False, "Horários inválidos. Use HH:MM."
         if fim <= ini:
             return False, "Hora de fim deve ser maior que a de início."
 
-        carrinho_txt = self.combo_carrinho.get().strip()
-        if not carrinho_txt:
-            return False, "Selecione um carrinho."
-
-        carrinho = self._resolver_carrinho_por_texto(carrinho_txt)
-        if not carrinho:
-            return False, "Carrinho selecionado não encontrado."
-
-        motorista_txt = self.combo_motorista.get().strip()
-        if not motorista_txt:
-            return False, "Selecione um responsável."
-
-        mot = self._resolver_motorista_por_texto(motorista_txt)
-        if not mot:
-            return False, "Responsável selecionado não encontrado."
+        try:
+            qtd = int(self.qtd_carrinhos_var.get().strip() or "1")
+            if qtd <= 0:
+                raise ValueError
+        except ValueError:
+            return False, "Quantidade de carrinhos inválida."
 
         if not self.local_var.get().strip():
             return False, "Informe o local/evento."
 
         return True, ""
 
-    def _resolver_carrinho_por_texto(self, txt: str):
-        for c in self.carrinhos:
-            if txt.startswith(c["nome"]) and c["id_externo"] in txt:
-                return c
-        return None
-
-    def _resolver_motorista_por_texto(self, txt: str):
-        nome = txt.split("•")[0].strip()
-        for f in self.funcionarios:
-            if f["nome"] == nome:
-                return f
-        return None
-
-    def _conflito(self, novo):
-        def overlap(a1, a2, b1, b2):
-            return a1 < b2 and a2 > b1
-
-        conflitos = []
-        for a in self.agendamentos:
-            if self._agendamento_em_edicao_id is not None and a["id"] == self._agendamento_em_edicao_id:
-                continue
-            if a["data"] != novo["data"]:
-                continue
-
-            if overlap(novo["inicio_min"], novo["fim_min"], a["inicio_min"], a["fim_min"]):
-                if a["carrinho_id"] == novo["carrinho_id"]:
-                    conflitos.append(f'Conflito: Carrinho já agendado {a["inicio"]}–{a["fim"]} em {a["local"]}.')
-                if a["motorista_id"] == novo["motorista_id"]:
-                    conflitos.append(f'Conflito: Responsável já alocado {a["inicio"]}–{a["fim"]} no {a["local"]}.')
-        return conflitos
-
     def _salvar_agendamento(self):
+        self._carregar_dados_operacionais()
+        self._atualizar_combos_operacionais()
+
         ok, msg = self._validar_inputs()
         if not ok:
             messagebox.showwarning("Validação", msg)
@@ -626,48 +1527,30 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         data = dt.date.fromisoformat(self.data_var.get().strip())
         ini_txt = self.hora_ini_var.get().strip()
         fim_txt = self.hora_fim_var.get().strip()
-        ini_min = self._parse_hora(ini_txt)
-        fim_min = self._parse_hora(fim_txt)
 
-        car = self._resolver_carrinho_por_texto(self.combo_carrinho.get().strip())
-        mot = self._resolver_motorista_por_texto(self.combo_motorista.get().strip())
-
-        novo = {
-            "id": self._agendamento_em_edicao_id or self._prox_id(),
+        payload = {
             "data": data,
             "inicio": ini_txt,
             "fim": fim_txt,
-            "inicio_min": ini_min,
-            "fim_min": fim_min,
-            "carrinho_id": car["id"],
-            "carrinho_nome": car["nome"],
-            "carrinho_id_externo": car["id_externo"],
-            "motorista_id": mot["id"],
-            "motorista_nome": mot["nome"],
             "local": self.local_var.get().strip(),
             "status": self.combo_status_ag.get().strip(),
-            "obs": self._pegar_obs()
+            "obs": self._pegar_obs(),
+            "quantidade_carrinhos": int(self.qtd_carrinhos_var.get().strip() or "1"),
+            "carrinhos_texto": "",
+            "carrinho_preferido_id": self._resolver_carrinho_preferido_id(),
+            "motorista_id": self._resolver_motorista_id(),
         }
 
-        conflitos = self._conflito(novo)
-        if conflitos:
-            messagebox.showerror("Conflito de horário", "\n".join(conflitos))
+        ok, err = self._salvar_agendamento_no_sistema(payload)
+        if not ok:
+            messagebox.showerror("Erro", f"Não foi possível salvar o agendamento.\n\n{err}")
             return
 
-        if self._agendamento_em_edicao_id is None:
-            self.agendamentos.append(novo)
-        else:
-            for i, a in enumerate(self.agendamentos):
-                if a["id"] == self._agendamento_em_edicao_id:
-                    self.agendamentos[i] = novo
-                    break
-
+        self._carregar_dados_operacionais()
         self._limpar_form()
         self._notificar_agenda()
+        self._render_lista_carrinhos()
         messagebox.showinfo("Agendamento", "Agendamento salvo com sucesso!")
-
-    def _prox_id(self):
-        return max([a["id"] for a in self.agendamentos], default=0) + 1
 
     def _limpar_form(self):
         self._agendamento_em_edicao_id = None
@@ -675,45 +1558,26 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
         self.hora_fim_var.set("12:00")
         self.local_var.set("")
         self.combo_status_ag.set("Agendado")
+        self.qtd_carrinhos_var.set("1")
+        self.combo_motorista.set("(sem motorista)")
+        self.combo_carrinho.set("(auto selecionar)")
         self._set_obs("")
 
-    def _agendamento_por_tag(self, tag):
-        if not tag.startswith("ag-"):
-            return None
-        aid = int(tag.split("-")[1])
-        return next((a for a in self.agendamentos if a["id"] == aid), None)
-
-    def _editar_agendamento_por_id(self, aid: int):
-        a = next((x for x in self.agendamentos if x["id"] == aid), None)
-        if not a:
-            return
-
-        self._agendamento_em_edicao_id = a["id"]
-        self.data_var.set(a["data"].strftime("%Y-%m-%d"))
-        self.hora_ini_var.set(a["inicio"])
-        self.hora_fim_var.set(a["fim"])
-        self.combo_carrinho.set(f'{a["carrinho_nome"]} ({a["carrinho_id_externo"]})')
-
-        mot = next((f for f in self.funcionarios if f["id"] == a["motorista_id"]), None)
-        if mot:
-            self.combo_motorista.set(f'{mot["nome"]} • {mot["telefone"]}')
-
-        self.local_var.set(a["local"])
-        self.combo_status_ag.set(a["status"])
-        self._set_obs(a.get("obs", ""))
-
     def remover_agendamento_por_id(self, aid: int):
-        self.agendamentos = [x for x in self.agendamentos if x["id"] != aid]
+        removido_no_sistema = self._remover_agendamento_do_sistema(aid)
+        if not removido_no_sistema:
+            self.agendamentos = [x for x in self.agendamentos if x["id"] != aid]
+        self._carregar_dados_operacionais()
         if self._agendamento_em_edicao_id == aid:
             self._limpar_form()
         self._notificar_agenda()
 
     def obter_agendamentos_do_dia(self):
+        self._carregar_dados_operacionais()
         try:
             data = dt.date.fromisoformat(self.data_var.get().strip())
         except ValueError:
             return []
-
         do_dia = [a for a in self.agendamentos if a["data"] == data]
         do_dia.sort(key=lambda x: x["inicio_min"])
         return do_dia
@@ -725,6 +1589,7 @@ class PaginaAgendamentoCarrinhos(ctk.CTkFrame):
 class PaginaAgendaDoDia(ctk.CTkFrame):
     def __init__(self, master, pagina_agendamento: PaginaAgendamentoCarrinhos, on_back_to_agendamento=None):
         super().__init__(master, fg_color=theme.COR_FUNDO)
+        _ensure_tree_styles()
 
         self.pagina_agendamento = pagina_agendamento
         self.on_back_to_agendamento = on_back_to_agendamento
@@ -744,16 +1609,14 @@ class PaginaAgendaDoDia(ctk.CTkFrame):
         topo.grid_columnconfigure(0, weight=1)
 
         self.lbl_titulo = ctk.CTkLabel(
-            topo,
-            text="Agenda do dia",
+            topo, text="Agenda do dia",
             font=ctk.CTkFont(family=theme.FONTE, size=20, weight="bold"),
             text_color=theme.COR_TEXTO
         )
         self.lbl_titulo.grid(row=0, column=0, sticky="w")
 
         self.lbl_sub = ctk.CTkLabel(
-            topo,
-            text="Agendamentos da data selecionada na aba Agendamentos.",
+            topo, text="Agendamentos da data selecionada na aba Agendamentos.",
             font=ctk.CTkFont(family=theme.FONTE, size=12),
             text_color=theme.COR_TEXTO_SEC
         )
@@ -765,54 +1628,18 @@ class PaginaAgendaDoDia(ctk.CTkFrame):
         linha_btns.grid_columnconfigure(1, weight=1)
 
         ctk.CTkButton(
-            linha_btns,
-            text="Atualizar agenda",
-            height=36,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
+            linha_btns, text="Atualizar agenda", height=36,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
             command=self.renderizar
         ).grid(row=0, column=0, padx=(0, 6), sticky="ew")
 
         ctk.CTkButton(
-            linha_btns,
-            text="Voltar para Agendamentos",
-            height=36,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
+            linha_btns, text="Voltar para Agendamentos", height=36,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
             command=self._voltar_para_agendamentos
         ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
-            "Agenda.Treeview",
-            font=(theme.FONTE, 11),
-            rowheight=34,
-            background=theme.COR_BOTAO,
-            fieldbackground=theme.COR_BOTAO,
-            foreground=theme.COR_TEXTO,
-            borderwidth=0,
-            relief="flat"
-        )
-        style.configure(
-            "Agenda.Treeview.Heading",
-            font=(theme.FONTE, 11, "bold"),
-            background=theme.COR_PAINEL,
-            foreground=theme.COR_TEXTO,
-            borderwidth=0,
-            relief="flat"
-        )
-        style.map(
-            "Agenda.Treeview",
-            background=[("selected", theme.COR_SELECIONADO)],
-            foreground=[("selected", theme.COR_TEXTO)]
-        )
 
         box = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
         box.grid(row=2, column=0, padx=24, pady=(0, 20), sticky="nsew")
@@ -827,15 +1654,15 @@ class PaginaAgendaDoDia(ctk.CTkFrame):
 
         self.tree_agenda = ttk.Treeview(
             self._frame_tree_agenda,
-            columns=("hora", "carrinho", "motorista", "local", "status"),
+            columns=("hora", "carrinhos", "motorista", "local", "status"),
             show="headings",
-            style="Agenda.Treeview"
+            style="Geladoce.Agenda.Treeview",
         )
         self.tree_agenda.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
 
         self.tree_agenda.heading("hora", text="Horário", anchor="w")
-        self.tree_agenda.heading("carrinho", text="Carrinho", anchor="w")
-        self.tree_agenda.heading("motorista", text="Responsável", anchor="w")
+        self.tree_agenda.heading("carrinhos", text="Carrinhos", anchor="w")
+        self.tree_agenda.heading("motorista", text="Motorista", anchor="w")
         self.tree_agenda.heading("local", text="Local/Evento", anchor="w")
         self.tree_agenda.heading("status", text="Status", anchor="w")
 
@@ -843,33 +1670,25 @@ class PaginaAgendaDoDia(ctk.CTkFrame):
         scroll.grid(row=0, column=1, sticky="ns", padx=(8, 8), pady=8)
         self.tree_agenda.configure(yscrollcommand=scroll.set)
 
-        self.tree_agenda.bind("<Double-1>", lambda e: self._carregar_para_edicao())
-
         ctk.CTkButton(
-            box,
-            text="Remover agendamento selecionado",
-            height=36,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
+            box, text="Remover agendamento selecionado", height=36,
+            fg_color=theme.COR_BOTAO, hover_color=theme.COR_HOVER, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER,
             command=self._remover_selecionado
         ).grid(row=1, column=0, padx=12, pady=(0, 12), sticky="ew")
 
     def _ajustar_colunas_tree_agenda(self, event=None):
         if not self.tree_agenda or not self._frame_tree_agenda:
             return
-
-        largura = max(self._frame_tree_agenda.winfo_width() - 28, 420)
+        largura = max(self._frame_tree_agenda.winfo_width() - 28, 520)
         c1 = int(largura * 0.14)
-        c2 = int(largura * 0.22)
-        c3 = int(largura * 0.22)
-        c4 = int(largura * 0.28)
+        c2 = int(largura * 0.28)
+        c3 = int(largura * 0.18)
+        c4 = int(largura * 0.30)
         c5 = max(largura - c1 - c2 - c3 - c4, 70)
 
         self.tree_agenda.column("hora", width=c1, anchor="w")
-        self.tree_agenda.column("carrinho", width=c2, anchor="w")
+        self.tree_agenda.column("carrinhos", width=c2, anchor="w")
         self.tree_agenda.column("motorista", width=c3, anchor="w")
         self.tree_agenda.column("local", width=c4, anchor="w")
         self.tree_agenda.column("status", width=c5, anchor="w")
@@ -887,15 +1706,26 @@ class PaginaAgendaDoDia(ctk.CTkFrame):
         do_dia = self.pagina_agendamento.obter_agendamentos_do_dia()
 
         for a in do_dia:
+            carrinhos_txt = a.get("carrinhos_texto") or ""
+            if not carrinhos_txt:
+                q = int(a.get("qtd_carrinhos") or 1)
+                if q > 1:
+                    carrinhos_txt = f"{q} carrinhos"
+                else:
+                    base = f'{a.get("carrinho_nome","")} ({a.get("carrinho_id_externo","")})'.strip()
+                    carrinhos_txt = base if base.strip("() ") else "1 carrinho"
+
+            mot_txt = a.get("motorista_nome") or "—"
+
             self.tree_agenda.insert(
                 "",
                 "end",
                 values=(
                     f'{a["inicio"]}–{a["fim"]}',
-                    f'{a["carrinho_nome"]} ({a["carrinho_id_externo"]})',
-                    a["motorista_nome"],
-                    a["local"],
-                    a["status"]
+                    carrinhos_txt,
+                    mot_txt,
+                    a.get("local", ""),
+                    a.get("status", "")
                 ),
                 tags=(f'ag-{a["id"]}',)
             )
@@ -908,912 +1738,47 @@ class PaginaAgendaDoDia(ctk.CTkFrame):
         sel = self.tree_agenda.selection()
         if not sel:
             return None
-
         tags = self.tree_agenda.item(sel[0], "tags")
         if not tags:
             return None
-
         tag = tags[0]
         if not str(tag).startswith("ag-"):
             return None
-
         return int(str(tag).split("-")[1])
-
-    def _carregar_para_edicao(self):
-        aid = self._obter_id_selecionado()
-        if aid is None:
-            return
-
-        self.pagina_agendamento._editar_agendamento_por_id(aid)
-        if callable(self.on_back_to_agendamento):
-            self.on_back_to_agendamento()
-        messagebox.showinfo("Edição", "Agendamento carregado para edição na aba Agendamentos.")
 
     def _remover_selecionado(self):
         aid = self._obter_id_selecionado()
         if aid is None:
             messagebox.showwarning("Remover", "Selecione um agendamento na lista.")
             return
-
         if not messagebox.askyesno("Confirmar", "Deseja remover este agendamento?"):
             return
-
         self.pagina_agendamento.remover_agendamento_por_id(aid)
         self.renderizar()
         messagebox.showinfo("Removido", "Agendamento removido.")
 
 
 # ===========================================================
-# ABA 3: DELIVERY
-# ===========================================================
-class PaginaDelivery(ctk.CTkFrame):
-    def __init__(self, master):
-        super().__init__(master, fg_color=theme.COR_FUNDO)
-
-        self.grid_columnconfigure(0, weight=4, uniform="dl_cols")
-        self.grid_columnconfigure(1, weight=3, uniform="dl_cols")
-        self.grid_columnconfigure(2, weight=2, uniform="dl_cols")
-        self.grid_rowconfigure(0, weight=0)
-        self.grid_rowconfigure(1, weight=1)
-
-        self.cli_nome_var = ctk.StringVar(value="")
-        self.cli_tel_var = ctk.StringVar(value="")
-        self.end_rua_var = ctk.StringVar(value="")
-        self.end_num_var = ctk.StringVar(value="")
-        self.end_bairro_var = ctk.StringVar(value="")
-        self.end_cidade_var = ctk.StringVar(value="Belém")
-        self.end_comp_var = ctk.StringVar(value="")
-
-        self.data_var = ctk.StringVar(value=dt.date.today().strftime("%Y-%m-%d"))
-        self.prev_saida_var = ctk.StringVar(value="00:30")
-        self.pag_var = ctk.StringVar(value="Pix")
-        self.status_var = ctk.StringVar(value="Pendente")
-        self.taxa_var = ctk.StringVar(value="5.00")
-
-        self.produto_var = ctk.StringVar(value="")
-        self.qtd_var = ctk.StringVar(value="1")
-        self.carrinho_itens = []
-
-        self.entregador_var = ctk.StringVar(value="")
-        self.obs_widget = None
-        self._pedido_em_edicao_id = None
-
-        self.produtos = self._mock_produtos()
-        self.entregadores = self._mock_entregadores()
-        self.entregas = []
-
-        self.tree_itens = None
-        self.tree = None
-        self.lbl_total = None
-        self._frame_tree_itens = None
-        self._frame_tree_delivery = None
-
-        self._titulo()
-        self._pedido_form()
-        self._painel_itens()
-        self._lista_dia()
-
-        self._render_itens()
-        self._render_entregas_dia()
-
-    def _titulo(self):
-        ctk.CTkLabel(
-            self,
-            text="Delivery",
-            font=ctk.CTkFont(family=theme.FONTE, size=16, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
-
-        ctk.CTkLabel(
-            self,
-            text="Cadastre pedidos, organize itens e acompanhe as entregas.",
-            font=ctk.CTkFont(family=theme.FONTE, size=12),
-            text_color=theme.COR_TEXTO_SEC
-        ).grid(row=0, column=1, columnspan=2, padx=16, pady=(16, 8), sticky="w")
-
-    def _pedido_form(self):
-        left = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
-        left.grid(row=1, column=0, padx=(16, 8), pady=(0, 16), sticky="nsew")
-        left.grid_columnconfigure(0, weight=1)
-
-        box_cli = ctk.CTkFrame(left, fg_color=theme.COR_BOTAO, corner_radius=12)
-        box_cli.grid(row=0, column=0, padx=12, pady=(12, 8), sticky="ew")
-        for c in range(2):
-            box_cli.grid_columnconfigure(c, weight=1)
-
-        ctk.CTkLabel(
-            box_cli,
-            text="Cliente",
-            text_color=theme.COR_TEXTO,
-            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold")
-        ).grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 4), sticky="w")
-
-        ctk.CTkEntry(
-            box_cli,
-            textvariable=self.cli_nome_var,
-            height=34,
-            placeholder_text="Nome",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=1, column=0, padx=(10, 5), pady=(0, 8), sticky="ew")
-
-        ctk.CTkEntry(
-            box_cli,
-            textvariable=self.cli_tel_var,
-            height=34,
-            placeholder_text="Telefone",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=1, column=1, padx=(5, 10), pady=(0, 8), sticky="ew")
-
-        box_end = ctk.CTkFrame(left, fg_color=theme.COR_BOTAO, corner_radius=12)
-        box_end.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="ew")
-        for c in range(4):
-            box_end.grid_columnconfigure(c, weight=1)
-
-        ctk.CTkLabel(
-            box_end,
-            text="Endereço de entrega",
-            text_color=theme.COR_TEXTO,
-            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold")
-        ).grid(row=0, column=0, columnspan=4, padx=10, pady=(10, 4), sticky="w")
-
-        ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_rua_var,
-            height=34,
-            placeholder_text="Rua / Avenida",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=1, column=0, columnspan=3, padx=(10, 5), pady=(0, 6), sticky="ew")
-
-        ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_num_var,
-            height=34,
-            placeholder_text="Número",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=1, column=3, padx=(5, 10), pady=(0, 6), sticky="ew")
-
-        ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_bairro_var,
-            height=34,
-            placeholder_text="Bairro",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=2, column=0, padx=(10, 5), pady=(0, 6), sticky="ew")
-
-        ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_cidade_var,
-            height=34,
-            placeholder_text="Cidade",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=2, column=1, padx=5, pady=(0, 6), sticky="ew")
-
-        ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_comp_var,
-            height=34,
-            placeholder_text="Complemento / Referência",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=2, column=2, columnspan=2, padx=(5, 10), pady=(0, 6), sticky="ew")
-
-        box_cfg = ctk.CTkFrame(left, fg_color=theme.COR_BOTAO, corner_radius=12)
-        box_cfg.grid(row=2, column=0, padx=12, pady=(0, 8), sticky="ew")
-        for c in range(4):
-            box_cfg.grid_columnconfigure(c, weight=1)
-
-        ctk.CTkLabel(
-            box_cfg,
-            text="Pedido",
-            text_color=theme.COR_TEXTO,
-            font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold")
-        ).grid(row=0, column=0, columnspan=4, padx=10, pady=(10, 4), sticky="w")
-
-        ctk.CTkLabel(box_cfg, text="Data", text_color=theme.COR_TEXTO).grid(row=1, column=0, padx=10, sticky="w")
-        ctk.CTkEntry(
-            box_cfg,
-            textvariable=self.data_var,
-            height=34,
-            placeholder_text="AAAA-MM-DD",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=2, column=0, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkLabel(box_cfg, text="Previsão de saída", text_color=theme.COR_TEXTO).grid(row=1, column=1, padx=10, sticky="w")
-        ctk.CTkEntry(
-            box_cfg,
-            textvariable=self.prev_saida_var,
-            height=34,
-            placeholder_text="00:30",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=2, column=1, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkLabel(box_cfg, text="Entregador", text_color=theme.COR_TEXTO).grid(row=1, column=2, padx=10, sticky="w")
-        self.combo_entregador = ctk.CTkComboBox(
-            box_cfg,
-            values=[f'{e["nome"]} • {e["telefone"]}' for e in self.entregadores],
-            variable=self.entregador_var,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        self.combo_entregador.grid(row=2, column=2, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkLabel(box_cfg, text="Pagamento", text_color=theme.COR_TEXTO).grid(row=1, column=3, padx=10, sticky="w")
-        self.combo_pag = ctk.CTkComboBox(
-            box_cfg,
-            values=["Pix", "Dinheiro", "Cartão"],
-            variable=self.pag_var,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        self.combo_pag.grid(row=2, column=3, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkLabel(box_cfg, text="Status", text_color=theme.COR_TEXTO).grid(row=3, column=0, padx=10, sticky="w")
-        self.combo_status = ctk.CTkComboBox(
-            box_cfg,
-            values=["Pendente", "Em preparo", "Em rota", "Entregue", "Cancelado"],
-            variable=self.status_var,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        self.combo_status.grid(row=4, column=0, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkLabel(box_cfg, text="Taxa de entrega (R$)", text_color=theme.COR_TEXTO).grid(row=3, column=1, padx=10, sticky="w")
-        ctk.CTkEntry(
-            box_cfg,
-            textvariable=self.taxa_var,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        ).grid(row=4, column=1, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkLabel(box_cfg, text="Produto", text_color=theme.COR_TEXTO).grid(row=5, column=0, columnspan=2, padx=10, sticky="w")
-        self.combo_prod = ctk.CTkComboBox(
-            box_cfg,
-            values=[f'{p["nome"]} • {theme.fmt_dinheiro(p["preco"])}' for p in self.produtos],
-            variable=self.produto_var,
-            fg_color=theme.COR_BOTAO,
-            button_color=theme.COR_SELECIONADO,
-            button_hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            dropdown_fg_color=theme.COR_BOTAO,
-            dropdown_hover_color=theme.COR_HOVER,
-            dropdown_text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        self.combo_prod.grid(row=6, column=0, columnspan=2, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkLabel(box_cfg, text="Qtd", text_color=theme.COR_TEXTO).grid(row=5, column=2, padx=10, sticky="w")
-        self.entry_qtd = ctk.CTkEntry(
-            box_cfg,
-            textvariable=self.qtd_var,
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        self.entry_qtd.grid(row=6, column=2, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkButton(
-            box_cfg,
-            text="Adicionar item",
-            height=34,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
-            command=self._adicionar_item
-        ).grid(row=6, column=3, padx=10, pady=(0, 8), sticky="ew")
-
-        ctk.CTkLabel(box_cfg, text="Observações", text_color=theme.COR_TEXTO).grid(row=7, column=0, columnspan=4, padx=10, sticky="w")
-        self.obs_widget = ctk.CTkTextbox(
-            box_cfg,
-            height=58,
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
-        )
-        self.obs_widget.grid(row=8, column=0, columnspan=4, padx=10, pady=(0, 10), sticky="ew")
-
-        linha_total = ctk.CTkFrame(left, fg_color="transparent")
-        linha_total.grid(row=3, column=0, padx=12, pady=(0, 12), sticky="ew")
-        linha_total.grid_columnconfigure(0, weight=1)
-
-        self.lbl_total = ctk.CTkLabel(
-            linha_total,
-            text="Total: R$ 0,00",
-            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
-            text_color=theme.COR_TEXTO
-        )
-        self.lbl_total.grid(row=0, column=0, sticky="w")
-
-        ctk.CTkButton(
-            linha_total,
-            text="Salvar pedido",
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
-            command=self._salvar_pedido
-        ).grid(row=1, column=0, pady=(8, 0), sticky="ew")
-
-    def _painel_itens(self):
-        middle = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
-        middle.grid(row=1, column=1, padx=8, pady=(0, 16), sticky="nsew")
-        middle.grid_columnconfigure(0, weight=1)
-        middle.grid_rowconfigure(1, weight=1)
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
-            "Itens.Treeview",
-            font=(theme.FONTE, 11),
-            rowheight=30,
-            background=theme.COR_BOTAO,
-            fieldbackground=theme.COR_BOTAO,
-            foreground=theme.COR_TEXTO,
-            borderwidth=0,
-            relief="flat"
-        )
-        style.configure(
-            "Itens.Treeview.Heading",
-            font=(theme.FONTE, 11, "bold"),
-            background=theme.COR_PAINEL,
-            foreground=theme.COR_TEXTO,
-            borderwidth=0,
-            relief="flat"
-        )
-        style.map(
-            "Itens.Treeview",
-            background=[("selected", theme.COR_SELECIONADO)],
-            foreground=[("selected", theme.COR_TEXTO)]
-        )
-
-        ctk.CTkLabel(
-            middle,
-            text="Itens do pedido",
-            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=0, column=0, padx=12, pady=(12, 6), sticky="w")
-
-        self._frame_tree_itens = ctk.CTkFrame(middle, fg_color=theme.COR_BOTAO, corner_radius=12)
-        self._frame_tree_itens.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="nsew")
-        self._frame_tree_itens.grid_rowconfigure(0, weight=1)
-        self._frame_tree_itens.grid_columnconfigure(0, weight=1)
-        self._frame_tree_itens.bind("<Configure>", self._ajustar_colunas_tree_itens)
-
-        self.tree_itens = ttk.Treeview(
-            self._frame_tree_itens,
-            columns=("produto", "qtd", "unitario", "subtotal"),
-            show="headings",
-            style="Itens.Treeview"
-        )
-        self.tree_itens.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
-
-        self.tree_itens.heading("produto", text="Produto", anchor="w")
-        self.tree_itens.heading("qtd", text="Qtd", anchor="w")
-        self.tree_itens.heading("unitario", text="Unitário", anchor="w")
-        self.tree_itens.heading("subtotal", text="Subtotal", anchor="w")
-
-        scroll = ttk.Scrollbar(self._frame_tree_itens, orient="vertical", command=self.tree_itens.yview)
-        scroll.grid(row=0, column=1, sticky="ns", padx=(8, 8), pady=8)
-        self.tree_itens.configure(yscrollcommand=scroll.set)
-
-        ctk.CTkButton(
-            middle,
-            text="Remover item selecionado",
-            height=36,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
-            command=self._remover_item_sel
-        ).grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
-
-    def _lista_dia(self):
-        right = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
-        right.grid(row=1, column=2, padx=(8, 16), pady=(0, 16), sticky="nsew")
-        right.grid_columnconfigure(0, weight=1)
-        right.grid_rowconfigure(1, weight=1)
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
-            "Delivery.Treeview",
-            font=(theme.FONTE, 11),
-            rowheight=34,
-            background=theme.COR_BOTAO,
-            fieldbackground=theme.COR_BOTAO,
-            foreground=theme.COR_TEXTO,
-            borderwidth=0,
-            relief="flat"
-        )
-        style.configure(
-            "Delivery.Treeview.Heading",
-            font=(theme.FONTE, 11, "bold"),
-            background=theme.COR_PAINEL,
-            foreground=theme.COR_TEXTO,
-            borderwidth=0,
-            relief="flat"
-        )
-        style.map(
-            "Delivery.Treeview",
-            background=[("selected", theme.COR_SELECIONADO)],
-            foreground=[("selected", theme.COR_TEXTO)]
-        )
-
-        ctk.CTkLabel(
-            right,
-            text="Entregas do dia",
-            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
-            text_color=theme.COR_TEXTO
-        ).grid(row=0, column=0, padx=12, pady=(12, 6), sticky="w")
-
-        self._frame_tree_delivery = ctk.CTkFrame(right, fg_color=theme.COR_BOTAO, corner_radius=12)
-        self._frame_tree_delivery.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="nsew")
-        self._frame_tree_delivery.grid_rowconfigure(0, weight=1)
-        self._frame_tree_delivery.grid_columnconfigure(0, weight=1)
-        self._frame_tree_delivery.bind("<Configure>", self._ajustar_colunas_tree_delivery)
-
-        self.tree = ttk.Treeview(
-            self._frame_tree_delivery,
-            columns=("hora", "cliente", "valor", "status"),
-            show="headings",
-            style="Delivery.Treeview"
-        )
-        self.tree.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
-
-        self.tree.heading("hora", text="Previsão", anchor="w")
-        self.tree.heading("cliente", text="Cliente", anchor="w")
-        self.tree.heading("valor", text="Total", anchor="w")
-        self.tree.heading("status", text="Status", anchor="w")
-
-        scroll = ttk.Scrollbar(self._frame_tree_delivery, orient="vertical", command=self.tree.yview)
-        scroll.grid(row=0, column=1, sticky="ns", padx=(8, 8), pady=8)
-        self.tree.configure(yscrollcommand=scroll.set)
-
-        self.tree.bind("<Double-1>", lambda e: self._editar_pedido_sel())
-
-        ctk.CTkButton(
-            right,
-            text="Remover pedido selecionado",
-            height=36,
-            fg_color=theme.COR_BOTAO,
-            hover_color=theme.COR_HOVER,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER,
-            command=self._remover_pedido_sel
-        ).grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
-
-    # -------------------- AJUSTES DINÂMICOS TREEVIEWS --------------------
-    def _ajustar_colunas_tree_itens(self, event=None):
-        if not self.tree_itens or not self._frame_tree_itens:
-            return
-        largura = max(self._frame_tree_itens.winfo_width() - 28, 250)
-        c1 = int(largura * 0.44)
-        c2 = int(largura * 0.10)
-        c3 = int(largura * 0.22)
-        c4 = max(largura - c1 - c2 - c3, 70)
-
-        self.tree_itens.column("produto", width=c1, anchor="w")
-        self.tree_itens.column("qtd", width=c2, anchor="w")
-        self.tree_itens.column("unitario", width=c3, anchor="w")
-        self.tree_itens.column("subtotal", width=c4, anchor="w")
-
-    def _ajustar_colunas_tree_delivery(self, event=None):
-        if not self.tree or not self._frame_tree_delivery:
-            return
-        largura = max(self._frame_tree_delivery.winfo_width() - 28, 220)
-        c1 = int(largura * 0.22)
-        c2 = int(largura * 0.38)
-        c3 = int(largura * 0.20)
-        c4 = max(largura - c1 - c2 - c3, 60)
-
-        self.tree.column("hora", width=c1, anchor="w")
-        self.tree.column("cliente", width=c2, anchor="w")
-        self.tree.column("valor", width=c3, anchor="w")
-        self.tree.column("status", width=c4, anchor="w")
-
-    def _mock_produtos(self):
-        return [
-            {"id": 1, "nome": "Açaí 500ml", "preco": 18.00},
-            {"id": 2, "nome": "Copo 300ml (Chocolate)", "preco": 12.00},
-            {"id": 3, "nome": "Picolé (Limão)", "preco": 5.00},
-            {"id": 4, "nome": "Casquinha", "preco": 7.50},
-        ]
-
-    def _mock_entregadores(self):
-        return [
-            {"id": 1, "nome": "Diego Motoboy", "telefone": "(91) 99999-1010"},
-            {"id": 2, "nome": "Larissa Entregas", "telefone": "(91) 98888-2020"},
-        ]
-
-    def _adicionar_item(self):
-        txt = self.combo_prod.get().strip()
-        if not txt:
-            messagebox.showwarning("Itens", "Selecione um produto.")
-            return
-
-        nome = txt.split("•")[0].strip()
-        prod = next((p for p in self.produtos if p["nome"] == nome), None)
-        if not prod:
-            messagebox.showwarning("Itens", "Produto inválido.")
-            return
-
-        try:
-            qtd = int(self.qtd_var.get())
-            if qtd <= 0:
-                raise ValueError
-        except ValueError:
-            messagebox.showwarning("Itens", "Quantidade inválida.")
-            return
-
-        existente = next((i for i in self.carrinho_itens if i["id"] == prod["id"]), None)
-        if existente:
-            existente["qtd"] += qtd
-        else:
-            self.carrinho_itens.append({
-                "id": prod["id"],
-                "nome": prod["nome"],
-                "preco": prod["preco"],
-                "qtd": qtd
-            })
-
-        self._render_itens()
-
-    def _remover_item_sel(self):
-        if not self.tree_itens:
-            return
-        sel = self.tree_itens.selection()
-        if not sel:
-            messagebox.showwarning("Itens", "Selecione um item na lista.")
-            return
-
-        tags = self.tree_itens.item(sel[0], "tags")
-        pid = None
-        for t in tags:
-            if str(t).startswith("it-"):
-                pid = int(t.split("-")[1])
-                break
-        if pid is None:
-            return
-
-        self._remover_item(pid)
-
-    def _remover_item(self, pid):
-        self.carrinho_itens = [i for i in self.carrinho_itens if i["id"] != pid]
-        self._render_itens()
-
-    def _render_itens(self):
-        if self.tree_itens:
-            for i in self.tree_itens.get_children():
-                self.tree_itens.delete(i)
-
-        subtotal = 0.0
-        for item in self.carrinho_itens:
-            item_total = item["preco"] * item["qtd"]
-            subtotal += item_total
-            if self.tree_itens:
-                self.tree_itens.insert(
-                    "",
-                    "end",
-                    values=(
-                        item["nome"],
-                        item["qtd"],
-                        theme.fmt_dinheiro(item["preco"]),
-                        theme.fmt_dinheiro(item_total)
-                    ),
-                    tags=(f'it-{item["id"]}',)
-                )
-
-        try:
-            taxa = float(self.taxa_var.get().replace(",", "."))
-        except ValueError:
-            taxa = 0.0
-
-        total = subtotal + taxa
-        if self.lbl_total:
-            self.lbl_total.configure(text=f"Total: {theme.fmt_dinheiro(total)}")
-
-    def _get_obs(self):
-        return self.obs_widget.get("1.0", "end").strip()
-
-    def _set_obs(self, txt):
-        self.obs_widget.delete("1.0", "end")
-        if txt:
-            self.obs_widget.insert("1.0", txt)
-
-    def _validar(self):
-        if not self.cli_nome_var.get().strip():
-            return False, "Informe o nome do cliente."
-        if not self.cli_tel_var.get().strip():
-            return False, "Informe o telefone do cliente."
-        if not self.end_rua_var.get().strip() or not self.end_bairro_var.get().strip():
-            return False, "Informe pelo menos Rua e Bairro."
-        if not self.carrinho_itens:
-            return False, "Adicione pelo menos 1 item ao pedido."
-        try:
-            dt.date.fromisoformat(self.data_var.get().strip())
-        except ValueError:
-            return False, "Data inválida (use AAAA-MM-DD)."
-
-        prev = self.prev_saida_var.get().strip()
-        if prev and self._parse_hora(prev) is None:
-            return False, "Previsão de saída inválida (use HH:MM)."
-
-        return True, ""
-
-    def _parse_hora(self, s):
-        try:
-            h, m = s.split(":")
-            h = int(h)
-            m = int(m)
-            if 0 <= h <= 23 and 0 <= m <= 59:
-                return h * 60 + m
-        except Exception:
-            pass
-        return None
-
-    def _calcular_total(self, itens, taxa):
-        return sum(i["preco"] * i["qtd"] for i in itens) + taxa
-
-    def _salvar_pedido(self):
-        ok, msg = self._validar()
-        if not ok:
-            messagebox.showwarning("Validação", msg)
-            return
-
-        try:
-            taxa = float(self.taxa_var.get().replace(",", "."))
-        except ValueError:
-            taxa = 0.0
-
-        total = self._calcular_total(self.carrinho_itens, taxa)
-        ent = self._resolver_entregador(self.combo_entregador.get().strip())
-
-        pedido = {
-            "id": self._pedido_em_edicao_id or self._prox_id(),
-            "data": dt.date.fromisoformat(self.data_var.get().strip()),
-            "prev": self.prev_saida_var.get().strip(),
-            "cliente": {
-                "nome": self.cli_nome_var.get().strip(),
-                "telefone": self.cli_tel_var.get().strip()
-            },
-            "endereco": {
-                "rua": self.end_rua_var.get().strip(),
-                "numero": self.end_num_var.get().strip(),
-                "bairro": self.end_bairro_var.get().strip(),
-                "cidade": self.end_cidade_var.get().strip(),
-                "comp": self.end_comp_var.get().strip()
-            },
-            "itens": [dict(i) for i in self.carrinho_itens],
-            "taxa": taxa,
-            "total": total,
-            "pagamento": self.combo_pag.get().strip(),
-            "status": self.combo_status.get().strip(),
-            "entregador_id": ent["id"] if ent else None,
-            "entregador_nome": ent["nome"] if ent else "",
-            "obs": self._get_obs()
-        }
-
-        if self._pedido_em_edicao_id is None:
-            self.entregas.append(pedido)
-        else:
-            for i, p in enumerate(self.entregas):
-                if p["id"] == self._pedido_em_edicao_id:
-                    self.entregas[i] = pedido
-                    break
-
-        self._limpar_form()
-        self._render_entregas_dia()
-        messagebox.showinfo("Delivery", "Pedido salvo com sucesso!")
-
-    def _resolver_entregador(self, txt):
-        if not txt:
-            return None
-        nome = txt.split("•")[0].strip()
-        return next((e for e in self.entregadores if e["nome"] == nome), None)
-
-    def _prox_id(self):
-        return max([p["id"] for p in self.entregas], default=0) + 1
-
-    def _limpar_form(self):
-        self._pedido_em_edicao_id = None
-        self.cli_nome_var.set("")
-        self.cli_tel_var.set("")
-        self.end_rua_var.set("")
-        self.end_num_var.set("")
-        self.end_bairro_var.set("")
-        self.end_comp_var.set("")
-        self.prev_saida_var.set("00:30")
-        self.pag_var.set("Pix")
-        self.status_var.set("Pendente")
-        self.carrinho_itens = []
-        self._set_obs("")
-        self._render_itens()
-
-    def _render_entregas_dia(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-
-        try:
-            dia = dt.date.fromisoformat(self.data_var.get().strip())
-        except ValueError:
-            dia = dt.date.today()
-
-        do_dia = [p for p in self.entregas if p["data"] == dia]
-
-        def key_prev(p):
-            m = self._parse_hora(p["prev"]) if p["prev"] else 9999
-            return m
-
-        do_dia.sort(key=key_prev)
-
-        for p in do_dia:
-            self.tree.insert(
-                "",
-                "end",
-                values=(
-                    p["prev"],
-                    p["cliente"]["nome"],
-                    theme.fmt_dinheiro(p["total"]),
-                    p["status"]
-                ),
-                tags=(f'pd-{p["id"]}',)
-            )
-
-    def _pedido_por_tag(self, tag):
-        if not tag.startswith("pd-"):
-            return None
-        pid = int(tag.split("-")[1])
-        return next((x for x in self.entregas if x["id"] == pid), None)
-
-    def _editar_pedido_sel(self):
-        sel = self.tree.selection()
-        if not sel:
-            return
-
-        tags = self.tree.item(sel[0], "tags")
-        if not tags:
-            return
-
-        p = self._pedido_por_tag(tags[0])
-        if not p:
-            return
-
-        self._pedido_em_edicao_id = p["id"]
-        self.data_var.set(p["data"].strftime("%Y-%m-%d"))
-        self.prev_saida_var.set(p["prev"])
-        self.cli_nome_var.set(p["cliente"]["nome"])
-        self.cli_tel_var.set(p["cliente"]["telefone"])
-        self.end_rua_var.set(p["endereco"]["rua"])
-        self.end_num_var.set(p["endereco"]["numero"])
-        self.end_bairro_var.set(p["endereco"]["bairro"])
-        self.end_cidade_var.set(p["endereco"]["cidade"])
-        self.end_comp_var.set(p["endereco"]["comp"])
-        self.pag_var.set(p["pagamento"])
-        self.status_var.set(p["status"])
-        self.taxa_var.set(f'{p["taxa"]:.2f}')
-
-        if p["entregador_nome"]:
-            ent = next((e for e in self.entregadores if e["nome"] == p["entregador_nome"]), None)
-            if ent:
-                self.combo_entregador.set(f'{ent["nome"]} • {ent["telefone"]}')
-            else:
-                self.combo_entregador.set(p["entregador_nome"])
-
-        self._set_obs(p.get("obs", ""))
-        self.carrinho_itens = [dict(i) for i in p["itens"]]
-        self._render_itens()
-        messagebox.showinfo("Editar", "Pedido carregado para edição.")
-
-    def _remover_pedido_sel(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("Remover", "Selecione um pedido.")
-            return
-
-        tags = self.tree.item(sel[0], "tags")
-        if not tags:
-            return
-
-        p = self._pedido_por_tag(tags[0])
-        if not p:
-            return
-
-        if not messagebox.askyesno("Confirmar", "Deseja remover este pedido?"):
-            return
-
-        self.entregas = [x for x in self.entregas if x["id"] != p["id"]]
-        self._render_entregas_dia()
-
-        if self._pedido_em_edicao_id == p["id"]:
-            self._limpar_form()
-
-        messagebox.showinfo("Removido", "Pedido removido.")
-
-
-# ===========================================================
 # WRAPPER: ABAS
 # ===========================================================
 class PaginaOperacaoCarrinhos(ctk.CTkFrame):
-    """
-    Página com abas:
-      - Agendamentos
-      - Agenda do dia
-      - Delivery
-    """
-    def __init__(self, master):
+    def __init__(self, master, sistema):
         super().__init__(master, fg_color=theme.COR_FUNDO)
+        self.sistema = sistema
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
 
         ctk.CTkLabel(
             self,
-            text="Operação • Carrinhos de Picolé",
+            text="Operação • Serviços",
             font=ctk.CTkFont(family=theme.FONTE, size=24, weight="bold"),
             text_color=theme.COR_TEXTO
         ).grid(row=0, column=0, padx=30, pady=(14, 6), sticky="w")
 
         ctk.CTkLabel(
             self,
-            text="Agende saídas de carrinhos e gerencie pedidos de delivery.",
+            text="Agende eventos, gerencie carrinhos e cadastre motoristas.",
             font=ctk.CTkFont(family=theme.FONTE, size=13),
             text_color=theme.COR_TEXTO_SEC
         ).grid(row=1, column=0, padx=30, pady=(0, 10), sticky="w")
@@ -1835,9 +1800,12 @@ class PaginaOperacaoCarrinhos(ctk.CTkFrame):
         tab_ag = self.tabs.add("Agendamentos")
         tab_agenda = self.tabs.add("Agenda do dia")
         tab_dl = self.tabs.add("Delivery")
+        tab_carrinhos = self.tabs.add("Carrinhos")
+        tab_motoristas = self.tabs.add("Motoristas")
 
         self.pg_ag = PaginaAgendamentoCarrinhos(
             tab_ag,
+            sistema=self.sistema,
             on_open_agenda=self._ir_para_aba_agenda,
             on_agenda_changed=self._atualizar_aba_agenda
         )
@@ -1850,8 +1818,32 @@ class PaginaOperacaoCarrinhos(ctk.CTkFrame):
         )
         self.pg_agenda.pack(fill="both", expand=True, padx=6, pady=6)
 
-        self.pg_dl = PaginaDelivery(tab_dl)
+        self.pg_dl = PaginaDelivery(tab_dl, self.sistema)
         self.pg_dl.pack(fill="both", expand=True, padx=6, pady=6)
+
+        self.pg_carrinhos = PaginaCadastroCarrinhos(
+            tab_carrinhos,
+            sistema=self.sistema,
+            on_changed=self._refresh_agendamento_dependencias
+        )
+        self.pg_carrinhos.pack(fill="both", expand=True, padx=6, pady=6)
+
+        self.pg_motoristas = PaginaCadastroMotoristas(
+            tab_motoristas,
+            sistema=self.sistema,
+            on_changed=self._refresh_agendamento_dependencias
+        )
+        self.pg_motoristas.pack(fill="both", expand=True, padx=6, pady=6)
+
+    def _refresh_agendamento_dependencias(self):
+        # quando cadastra carrinho/motorista, atualiza combos da aba agendamentos
+        if hasattr(self, "pg_ag") and self.pg_ag:
+            try:
+                self.pg_ag._carregar_dados_operacionais()
+                self.pg_ag._atualizar_combos_operacionais()
+                self.pg_ag._render_lista_carrinhos()
+            except Exception:
+                pass
 
     def _ir_para_aba_agenda(self):
         self.pg_agenda.renderizar()
