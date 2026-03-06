@@ -18,7 +18,8 @@ class ProdutosRepository:
     Regras:
       - cria/garante linha de estoque
       - nunca deixa estoque negativo
-      - exclusão padrão: inativação (ativo=0), pois vendas_itens tem FK RESTRICT
+      - exclusão padrão: inativação (ativo=0)
+      - CATÁLOGO (vendas): por padrão NÃO retorna insumos
     """
 
     CATEGORIAS_VALIDAS = {"Sorvete", "Picolé", "Açaí", "Outros"}
@@ -101,7 +102,17 @@ class ProdutosRepository:
                 if conn is not None and conn.is_connected():
                     conn.close()
 
-    def listar_catalogo(self, termo: str = "", categoria: str = "Todos", incluir_inativos: bool = False) -> List[Dict[str, Any]]:
+    def listar_catalogo(
+        self,
+        termo: str = "",
+        categoria: str = "Todos",
+        incluir_inativos: bool = False,
+        incluir_insumos: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        CATÁLOGO DE VENDAS:
+        - por padrão: ativo=1 e NÃO inclui insumos
+        """
         termo = str(termo or "").strip()
         categoria = str(categoria or "Todos").strip()
 
@@ -110,6 +121,10 @@ class ProdutosRepository:
 
         if not incluir_inativos:
             filtros.append("p.ativo = 1")
+
+        if not incluir_insumos:
+            filtros.append("p.tipo_item <> 'Insumo'")
+            filtros.append("p.eh_insumo = 0")
 
         if categoria and categoria != "Todos":
             cat = self._normalizar_categoria(categoria)
@@ -258,35 +273,12 @@ class ProdutosRepository:
                     conn.close()
 
     def excluir_produto(self, produto_id: int) -> None:
-        """
-        Exclusão padrão: INATIVA (ativo=0).
-        Motivo: vendas_itens.produto_id tem FK com ON DELETE RESTRICT.
-        """
         conn = None
         cur = None
         try:
             conn = conectar()
             cur = conn.cursor()
             cur.execute("UPDATE produtos SET ativo = 0 WHERE id = %s", (int(produto_id),))
-            conn.commit()
-        finally:
-            try:
-                if cur is not None:
-                    cur.close()
-            finally:
-                if conn is not None and conn.is_connected():
-                    conn.close()
-
-    def deletar_definitivo(self, produto_id: int) -> None:
-        """
-        Delete físico (use só se tiver certeza que não há vendas_itens referenciando).
-        """
-        conn = None
-        cur = None
-        try:
-            conn = conectar()
-            cur = conn.cursor()
-            cur.execute("DELETE FROM produtos WHERE id = %s", (int(produto_id),))
             conn.commit()
         finally:
             try:

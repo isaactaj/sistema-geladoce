@@ -1,18 +1,15 @@
+# app/pages/servicos/delivery_inalterado.py
 # -*- coding: utf-8 -*-
-
 import customtkinter as ctk
 from tkinter import ttk, messagebox
 import datetime as dt
 
 from app.config import theme
 
-# ===========================================================
-# ABA 3: DELIVERY
-# ===========================================================
+
 class PaginaDelivery(ctk.CTkFrame):
     def __init__(self, master, sistema):
         super().__init__(master, fg_color=theme.COR_FUNDO)
-
         self.sistema = sistema
 
         self.grid_columnconfigure(0, weight=4, uniform="dl_cols")
@@ -47,7 +44,6 @@ class PaginaDelivery(ctk.CTkFrame):
         self._mapa_produtos_combo = {}
 
         self.entregadores = self._carregar_entregadores()
-        self.entregas = []
 
         self.tree_itens = None
         self.tree = None
@@ -64,6 +60,7 @@ class PaginaDelivery(ctk.CTkFrame):
         self._render_itens()
         self._render_entregas_dia()
 
+    # -------------------- Helpers sistema --------------------
     def _obter_metodo_sistema(self, *nomes):
         if not self.sistema:
             return None
@@ -73,6 +70,7 @@ class PaginaDelivery(ctk.CTkFrame):
                 return metodo
         return None
 
+    # -------------------- UI --------------------
     def _titulo(self):
         ctk.CTkLabel(
             self,
@@ -99,32 +97,23 @@ class PaginaDelivery(ctk.CTkFrame):
             box_cli.grid_columnconfigure(c, weight=1)
 
         ctk.CTkLabel(
-            box_cli,
-            text="Cliente",
+            box_cli, text="Cliente",
             text_color=theme.COR_TEXTO,
             font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold")
         ).grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 4), sticky="w")
 
         ctk.CTkEntry(
-            box_cli,
-            textvariable=self.cli_nome_var,
-            height=34,
+            box_cli, textvariable=self.cli_nome_var, height=34,
             placeholder_text="Nome",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=1, column=0, padx=(10, 5), pady=(0, 8), sticky="ew")
 
         ctk.CTkEntry(
-            box_cli,
-            textvariable=self.cli_tel_var,
-            height=34,
+            box_cli, textvariable=self.cli_tel_var, height=34,
             placeholder_text="Telefone",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=1, column=1, padx=(5, 10), pady=(0, 8), sticky="ew")
 
         box_end = ctk.CTkFrame(left, fg_color=theme.COR_BOTAO, corner_radius=12)
@@ -133,65 +122,44 @@ class PaginaDelivery(ctk.CTkFrame):
             box_end.grid_columnconfigure(c, weight=1)
 
         ctk.CTkLabel(
-            box_end,
-            text="Endereço de entrega",
+            box_end, text="Endereço de entrega",
             text_color=theme.COR_TEXTO,
             font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold")
         ).grid(row=0, column=0, columnspan=4, padx=10, pady=(10, 4), sticky="w")
 
         ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_rua_var,
-            height=34,
+            box_end, textvariable=self.end_rua_var, height=34,
             placeholder_text="Rua / Avenida",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=1, column=0, columnspan=3, padx=(10, 5), pady=(0, 6), sticky="ew")
 
         ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_num_var,
-            height=34,
+            box_end, textvariable=self.end_num_var, height=34,
             placeholder_text="Número",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=1, column=3, padx=(5, 10), pady=(0, 6), sticky="ew")
 
         ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_bairro_var,
-            height=34,
+            box_end, textvariable=self.end_bairro_var, height=34,
             placeholder_text="Bairro",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=2, column=0, padx=(10, 5), pady=(0, 6), sticky="ew")
 
         ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_cidade_var,
-            height=34,
+            box_end, textvariable=self.end_cidade_var, height=34,
             placeholder_text="Cidade",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=2, column=1, padx=5, pady=(0, 6), sticky="ew")
 
         ctk.CTkEntry(
-            box_end,
-            textvariable=self.end_comp_var,
-            height=34,
+            box_end, textvariable=self.end_comp_var, height=34,
             placeholder_text="Complemento / Referência",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=2, column=2, columnspan=2, padx=(5, 10), pady=(0, 6), sticky="ew")
 
         box_cfg = ctk.CTkFrame(left, fg_color=theme.COR_BOTAO, corner_radius=12)
@@ -200,34 +168,25 @@ class PaginaDelivery(ctk.CTkFrame):
             box_cfg.grid_columnconfigure(c, weight=1)
 
         ctk.CTkLabel(
-            box_cfg,
-            text="Pedido",
+            box_cfg, text="Pedido",
             text_color=theme.COR_TEXTO,
             font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold")
         ).grid(row=0, column=0, columnspan=4, padx=10, pady=(10, 4), sticky="w")
 
         ctk.CTkLabel(box_cfg, text="Data", text_color=theme.COR_TEXTO).grid(row=1, column=0, padx=10, sticky="w")
         ctk.CTkEntry(
-            box_cfg,
-            textvariable=self.data_var,
-            height=34,
+            box_cfg, textvariable=self.data_var, height=34,
             placeholder_text="AAAA-MM-DD",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=2, column=0, padx=10, pady=(0, 8), sticky="ew")
 
         ctk.CTkLabel(box_cfg, text="Previsão de saída", text_color=theme.COR_TEXTO).grid(row=1, column=1, padx=10, sticky="w")
         ctk.CTkEntry(
-            box_cfg,
-            textvariable=self.prev_saida_var,
-            height=34,
+            box_cfg, textvariable=self.prev_saida_var, height=34,
             placeholder_text="00:30",
-            fg_color=theme.COR_BOTAO,
-            text_color=theme.COR_TEXTO,
-            border_width=1,
-            border_color=theme.COR_HOVER
+            fg_color=theme.COR_BOTAO, text_color=theme.COR_TEXTO,
+            border_width=1, border_color=theme.COR_HOVER
         ).grid(row=2, column=1, padx=10, pady=(0, 8), sticky="ew")
 
         ctk.CTkLabel(box_cfg, text="Entregador", text_color=theme.COR_TEXTO).grid(row=1, column=2, padx=10, sticky="w")
@@ -254,7 +213,7 @@ class PaginaDelivery(ctk.CTkFrame):
         ctk.CTkLabel(box_cfg, text="Pagamento", text_color=theme.COR_TEXTO).grid(row=1, column=3, padx=10, sticky="w")
         self.combo_pag = ctk.CTkComboBox(
             box_cfg,
-            values=["Pix", "Dinheiro", "Cartão"],
+            values=["Pix", "Dinheiro", "Cartão", "Cartao", "Prazo"],
             variable=self.pag_var,
             fg_color=theme.COR_BOTAO,
             button_color=theme.COR_SELECIONADO,
@@ -371,6 +330,7 @@ class PaginaDelivery(ctk.CTkFrame):
             command=self._salvar_pedido
         ).grid(row=1, column=0, pady=(8, 0), sticky="ew")
 
+    # -------------------- painel itens --------------------
     def _painel_itens(self):
         middle = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
         middle.grid(row=1, column=1, padx=8, pady=(0, 16), sticky="nsew")
@@ -378,7 +338,10 @@ class PaginaDelivery(ctk.CTkFrame):
         middle.grid_rowconfigure(1, weight=1)
 
         style = ttk.Style()
-        style.theme_use("clam")
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
         style.configure(
             "Itens.Treeview",
             font=(theme.FONTE, 11),
@@ -445,6 +408,7 @@ class PaginaDelivery(ctk.CTkFrame):
             command=self._remover_item_sel
         ).grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
 
+    # -------------------- lista dia --------------------
     def _lista_dia(self):
         right = ctk.CTkFrame(self, fg_color=theme.COR_PAINEL, corner_radius=14)
         right.grid(row=1, column=2, padx=(8, 16), pady=(0, 16), sticky="nsew")
@@ -452,7 +416,10 @@ class PaginaDelivery(ctk.CTkFrame):
         right.grid_rowconfigure(1, weight=1)
 
         style = ttk.Style()
-        style.theme_use("clam")
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
         style.configure(
             "Delivery.Treeview",
             font=(theme.FONTE, 11),
@@ -521,7 +488,7 @@ class PaginaDelivery(ctk.CTkFrame):
             command=self._remover_pedido_sel
         ).grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
 
-    # -------------------- AJUSTES DINÂMICOS TREEVIEWS --------------------
+    # -------------------- ajustes tree --------------------
     def _ajustar_colunas_tree_itens(self, event=None):
         if not self.tree_itens or not self._frame_tree_itens:
             return
@@ -530,7 +497,6 @@ class PaginaDelivery(ctk.CTkFrame):
         c2 = int(largura * 0.10)
         c3 = int(largura * 0.22)
         c4 = max(largura - c1 - c2 - c3, 70)
-
         self.tree_itens.column("produto", width=c1, anchor="w")
         self.tree_itens.column("qtd", width=c2, anchor="w")
         self.tree_itens.column("unitario", width=c3, anchor="w")
@@ -544,18 +510,16 @@ class PaginaDelivery(ctk.CTkFrame):
         c2 = int(largura * 0.38)
         c3 = int(largura * 0.20)
         c4 = max(largura - c1 - c2 - c3, 60)
-
         self.tree.column("hora", width=c1, anchor="w")
         self.tree.column("cliente", width=c2, anchor="w")
         self.tree.column("valor", width=c3, anchor="w")
         self.tree.column("status", width=c4, anchor="w")
 
-    # -------------------- DADOS / SISTEMA --------------------
+    # -------------------- dados --------------------
     def _listar_funcionarios_sistema(self):
         metodo = self._obter_metodo_sistema("listar_funcionarios")
         if not metodo:
             return []
-
         try:
             itens = metodo()
         except TypeError:
@@ -565,27 +529,22 @@ class PaginaDelivery(ctk.CTkFrame):
                 return []
         except Exception:
             return []
-
         if not isinstance(itens, list):
             return []
-
         normalizados = []
         for f in itens:
             if not isinstance(f, dict):
                 continue
-
             try:
                 fid = int(f.get("id"))
             except Exception:
                 continue
-
             normalizados.append({
                 "id": fid,
                 "nome": str(f.get("nome") or f"Funcionário {fid}"),
                 "telefone": str(f.get("telefone") or ""),
                 "cargo": str(f.get("cargo") or ""),
             })
-
         return normalizados
 
     def _carregar_entregadores(self):
@@ -616,7 +575,6 @@ class PaginaDelivery(ctk.CTkFrame):
         funcionarios = self._listar_funcionarios_sistema()
         if not funcionarios:
             return []
-
         filtrados = [
             f for f in funcionarios
             if any(chave in f["cargo"].lower() for chave in ("entreg", "motoboy", "moto"))
@@ -627,7 +585,6 @@ class PaginaDelivery(ctk.CTkFrame):
         metodo = self._obter_metodo_sistema("listar_catalogo")
         if not metodo:
             return []
-
         try:
             itens = metodo()
         except TypeError:
@@ -637,7 +594,6 @@ class PaginaDelivery(ctk.CTkFrame):
                 itens = []
         except Exception:
             itens = []
-
         if not isinstance(itens, list):
             return []
 
@@ -647,44 +603,36 @@ class PaginaDelivery(ctk.CTkFrame):
                 continue
             if p.get("ativo") is False:
                 continue
-
             if p.get("eh_insumo") is True:
                 continue
             if str(p.get("tipo_item", "")).strip().lower() == "insumo":
                 continue
-
             try:
                 preco = float(p.get("preco", 0) or 0)
             except Exception:
                 preco = 0.0
-
             try:
                 estoque = int(p.get("estoque", 0) or 0)
             except Exception:
                 estoque = 0
-
             catalogo.append({
                 "id": p["id"],
                 "nome": p.get("nome", "Produto"),
                 "preco": preco,
                 "estoque": estoque,
             })
-
         return catalogo
 
     def _carregar_produtos_combo(self):
         self.produtos = self._listar_catalogo()
         self._mapa_produtos_combo = {}
-
         opcoes = []
         for p in self.produtos:
             texto = f'{p["nome"]} • {theme.fmt_dinheiro(p["preco"])}'
             opcoes.append(texto)
             self._mapa_produtos_combo[texto] = p
-
         if not opcoes:
             opcoes = ["(sem produtos)"]
-
         self.combo_prod.configure(values=opcoes)
         self.combo_prod.set(opcoes[0])
 
@@ -692,13 +640,9 @@ class PaginaDelivery(ctk.CTkFrame):
         texto = self.combo_prod.get().strip()
         return self._mapa_produtos_combo.get(texto)
 
-    def _status_gera_venda(self, status):
-        return status in {"Em preparo", "Em rota", "Entregue"}
-
-    # -------------------- ITENS --------------------
+    # -------------------- itens --------------------
     def _adicionar_item(self):
         self._carregar_produtos_combo()
-
         prod = self._resolver_produto_combo()
         if not prod:
             messagebox.showwarning("Itens", "Selecione um produto válido.")
@@ -738,7 +682,6 @@ class PaginaDelivery(ctk.CTkFrame):
         if not sel:
             messagebox.showwarning("Itens", "Selecione um item na lista.")
             return
-
         tags = self.tree_itens.item(sel[0], "tags")
         pid = None
         for t in tags:
@@ -747,10 +690,6 @@ class PaginaDelivery(ctk.CTkFrame):
                 break
         if pid is None:
             return
-
-        self._remover_item(pid)
-
-    def _remover_item(self, pid):
         self.carrinho_itens = [i for i in self.carrinho_itens if i["id"] != pid]
         self._render_itens()
 
@@ -763,18 +702,12 @@ class PaginaDelivery(ctk.CTkFrame):
         for item in self.carrinho_itens:
             item_total = item["preco"] * item["qtd"]
             subtotal += item_total
-            if self.tree_itens:
-                self.tree_itens.insert(
-                    "",
-                    "end",
-                    values=(
-                        item["nome"],
-                        item["qtd"],
-                        theme.fmt_dinheiro(item["preco"]),
-                        theme.fmt_dinheiro(item_total)
-                    ),
-                    tags=(f'it-{item["id"]}',)
-                )
+            self.tree_itens.insert(
+                "",
+                "end",
+                values=(item["nome"], item["qtd"], theme.fmt_dinheiro(item["preco"]), theme.fmt_dinheiro(item_total)),
+                tags=(f'it-{item["id"]}',)
+            )
 
         try:
             taxa = float(self.taxa_var.get().replace(",", "."))
@@ -782,8 +715,7 @@ class PaginaDelivery(ctk.CTkFrame):
             taxa = 0.0
 
         total = subtotal + taxa
-        if self.lbl_total:
-            self.lbl_total.configure(text=f"Total: {theme.fmt_dinheiro(total)}")
+        self.lbl_total.configure(text=f"Total: {theme.fmt_dinheiro(total)}")
 
     def _get_obs(self):
         return self.obs_widget.get("1.0", "end").strip()
@@ -793,7 +725,17 @@ class PaginaDelivery(ctk.CTkFrame):
         if txt:
             self.obs_widget.insert("1.0", txt)
 
-    # -------------------- VALIDAÇÃO / CÁLCULO --------------------
+    # -------------------- validação --------------------
+    def _parse_hora(self, s):
+        try:
+            h, m = s.split(":")
+            h = int(h); m = int(m)
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                return h * 60 + m
+        except Exception:
+            return None
+        return None
+
     def _validar(self):
         if not self.cli_nome_var.get().strip():
             return False, "Informe o nome do cliente."
@@ -811,24 +753,29 @@ class PaginaDelivery(ctk.CTkFrame):
         prev = self.prev_saida_var.get().strip()
         if prev and self._parse_hora(prev) is None:
             return False, "Previsão de saída inválida (use HH:MM)."
-
         return True, ""
 
-    def _parse_hora(self, s):
+    # -------------------- banco: listar --------------------
+    def _listar_entregas_dia_sistema(self, dia: dt.date):
+        metodo = self._obter_metodo_sistema("listar_delivery_dia")
+        if not metodo:
+            return []
         try:
-            h, m = s.split(":")
-            h = int(h)
-            m = int(m)
-            if 0 <= h <= 23 and 0 <= m <= 59:
-                return h * 60 + m
+            res = metodo(dia)
+            return res if isinstance(res, list) else []
         except Exception:
-            pass
-        return None
+            return []
 
-    def _calcular_total(self, itens, taxa):
-        return sum(i["preco"] * i["qtd"] for i in itens) + taxa
+    def _obter_pedido_sistema(self, pedido_id: int):
+        metodo = self._obter_metodo_sistema("obter_delivery")
+        if not metodo:
+            return None
+        try:
+            return metodo(pedido_id)
+        except Exception:
+            return None
 
-    # -------------------- SALVAR / VENDAS --------------------
+    # -------------------- salvar pedido (MySQL + venda) --------------------
     def _salvar_pedido(self):
         ok, msg = self._validar()
         if not ok:
@@ -840,95 +787,52 @@ class PaginaDelivery(ctk.CTkFrame):
         except ValueError:
             taxa = 0.0
 
-        total = self._calcular_total(self.carrinho_itens, taxa)
-        ent = self._resolver_entregador(self.combo_entregador.get().strip())
-
-        pedido_existente = None
-        if self._pedido_em_edicao_id is not None:
-            pedido_existente = next((p for p in self.entregas if p["id"] == self._pedido_em_edicao_id), None)
-
-        venda_ja_registrada = pedido_existente.get("venda_registrada", False) if pedido_existente else False
+        # resolver entregador
+        ent_txt = self.combo_entregador.get().strip()
+        entregador_id = None
+        entregador_nome = ""
+        if ent_txt and ent_txt != "(nenhum entregador)":
+            nome = ent_txt.split("•")[0].strip()
+            ent = next((e for e in self.entregadores if e["nome"] == nome), None)
+            if ent:
+                entregador_id = ent["id"]
+                entregador_nome = ent["nome"]
 
         pedido = {
-            "id": self._pedido_em_edicao_id or self._prox_id(),
+            "id": self._pedido_em_edicao_id,
             "data": dt.date.fromisoformat(self.data_var.get().strip()),
             "prev": self.prev_saida_var.get().strip(),
-            "cliente": {
-                "nome": self.cli_nome_var.get().strip(),
-                "telefone": self.cli_tel_var.get().strip()
-            },
+            "cliente": {"nome": self.cli_nome_var.get().strip(), "telefone": self.cli_tel_var.get().strip()},
             "endereco": {
                 "rua": self.end_rua_var.get().strip(),
                 "numero": self.end_num_var.get().strip(),
                 "bairro": self.end_bairro_var.get().strip(),
                 "cidade": self.end_cidade_var.get().strip(),
-                "comp": self.end_comp_var.get().strip()
+                "comp": self.end_comp_var.get().strip(),
             },
             "itens": [dict(i) for i in self.carrinho_itens],
             "taxa": taxa,
-            "total": total,
             "pagamento": self.combo_pag.get().strip(),
             "status": self.combo_status.get().strip(),
-            "entregador_id": ent["id"] if ent else None,
-            "entregador_nome": ent["nome"] if ent else "",
+            "entregador_id": entregador_id,
+            "entregador_nome": entregador_nome,
             "obs": self._get_obs(),
-            "venda_registrada": venda_ja_registrada
         }
 
-        precisa_registrar_venda = self._status_gera_venda(pedido["status"]) and not venda_ja_registrada
+        metodo = self._obter_metodo_sistema("salvar_pedido_delivery")
+        if not metodo:
+            messagebox.showerror("Erro", "SistemaService não possui salvar_pedido_delivery().")
+            return
 
-        if precisa_registrar_venda:
-            try:
-                try:
-                    self.sistema.registrar_venda(
-                        tipo="DELIVERY",
-                        cliente_id=None,
-                        itens=[{"produto_id": i["id"], "qtd": i["qtd"]} for i in self.carrinho_itens],
-                        forma_pagamento=self.combo_pag.get(),
-                        desconto=0,
-                        taxa_entrega=taxa,
-                        observacao=self._get_obs(),
-                        data_venda=self.data_var.get().strip(),
-                    )
-                except TypeError:
-                    self.sistema.registrar_venda(
-                        tipo="DELIVERY",
-                        cliente_id=None,
-                        itens=[{"produto_id": i["id"], "qtd": i["qtd"]} for i in self.carrinho_itens],
-                        forma_pagamento=self.combo_pag.get(),
-                        desconto=0,
-                        observacao=self._get_obs(),
-                        data_venda=self.data_var.get().strip(),
-                    )
-            except Exception as e:
-                messagebox.showerror(
-                    "Erro",
-                    f"Não foi possível registrar a venda do delivery.\n\nDetalhes: {e}"
-                )
-                return
-
-            pedido["venda_registrada"] = True
-
-        if self._pedido_em_edicao_id is None:
-            self.entregas.append(pedido)
-        else:
-            for i, p in enumerate(self.entregas):
-                if p["id"] == self._pedido_em_edicao_id:
-                    self.entregas[i] = pedido
-                    break
+        try:
+            metodo(pedido)  # ✅ salva no MySQL e gera venda quando necessário
+        except Exception as e:
+            messagebox.showerror("Erro", f"Não foi possível salvar o delivery.\n\n{e}")
+            return
 
         self._limpar_form()
         self._render_entregas_dia()
         messagebox.showinfo("Delivery", "Pedido salvo com sucesso!")
-
-    def _resolver_entregador(self, txt):
-        if not txt or txt == "(nenhum entregador)":
-            return None
-        nome = txt.split("•")[0].strip()
-        return next((e for e in self.entregadores if e["nome"] == nome), None)
-
-    def _prox_id(self):
-        return max([p["id"] for p in self.entregas], default=0) + 1
 
     def _limpar_form(self):
         self._pedido_em_edicao_id = None
@@ -947,7 +851,7 @@ class PaginaDelivery(ctk.CTkFrame):
         self._carregar_produtos_combo()
         self._render_itens()
 
-    # -------------------- LISTA DO DIA --------------------
+    # -------------------- render entregas --------------------
     def _render_entregas_dia(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
@@ -957,61 +861,61 @@ class PaginaDelivery(ctk.CTkFrame):
         except ValueError:
             dia = dt.date.today()
 
-        do_dia = [p for p in self.entregas if p["data"] == dia]
+        entregas = self._listar_entregas_dia_sistema(dia)
 
+        # ordena por prev
         def key_prev(p):
-            m = self._parse_hora(p["prev"]) if p["prev"] else 9999
+            m = self._parse_hora(p.get("prev", "")) if p.get("prev") else 9999
             return m
 
-        do_dia.sort(key=key_prev)
+        entregas.sort(key=key_prev)
 
-        for p in do_dia:
+        for p in entregas:
             self.tree.insert(
                 "",
                 "end",
-                values=(
-                    p["prev"],
-                    p["cliente"]["nome"],
-                    theme.fmt_dinheiro(p["total"]),
-                    p["status"]
-                ),
+                values=(p.get("prev", ""), p.get("cliente", {}).get("nome", ""), theme.fmt_dinheiro(p.get("total", 0)), p.get("status", "")),
                 tags=(f'pd-{p["id"]}',)
             )
 
-    def _pedido_por_tag(self, tag):
-        if not tag.startswith("pd-"):
-            return None
-        pid = int(tag.split("-")[1])
-        return next((x for x in self.entregas if x["id"] == pid), None)
-
-    def _editar_pedido_sel(self):
+    def _pedido_id_por_sel(self):
         sel = self.tree.selection()
         if not sel:
-            return
-
+            return None
         tags = self.tree.item(sel[0], "tags")
         if not tags:
+            return None
+        tag = str(tags[0])
+        if not tag.startswith("pd-"):
+            return None
+        return int(tag.split("-")[1])
+
+    def _editar_pedido_sel(self):
+        pid = self._pedido_id_por_sel()
+        if pid is None:
             return
 
-        p = self._pedido_por_tag(tags[0])
+        p = self._obter_pedido_sistema(pid)
         if not p:
+            messagebox.showwarning("Editar", "Pedido não encontrado.")
             return
 
         self._pedido_em_edicao_id = p["id"]
         self.data_var.set(p["data"].strftime("%Y-%m-%d"))
-        self.prev_saida_var.set(p["prev"])
-        self.cli_nome_var.set(p["cliente"]["nome"])
-        self.cli_tel_var.set(p["cliente"]["telefone"])
-        self.end_rua_var.set(p["endereco"]["rua"])
-        self.end_num_var.set(p["endereco"]["numero"])
-        self.end_bairro_var.set(p["endereco"]["bairro"])
-        self.end_cidade_var.set(p["endereco"]["cidade"])
-        self.end_comp_var.set(p["endereco"]["comp"])
-        self.pag_var.set(p["pagamento"])
-        self.status_var.set(p["status"])
-        self.taxa_var.set(f'{p["taxa"]:.2f}')
+        self.prev_saida_var.set(p.get("prev", ""))
+        self.cli_nome_var.set(p.get("cliente", {}).get("nome", ""))
+        self.cli_tel_var.set(p.get("cliente", {}).get("telefone", ""))
+        self.end_rua_var.set(p.get("endereco", {}).get("rua", ""))
+        self.end_num_var.set(p.get("endereco", {}).get("numero", ""))
+        self.end_bairro_var.set(p.get("endereco", {}).get("bairro", ""))
+        self.end_cidade_var.set(p.get("endereco", {}).get("cidade", "Belém"))
+        self.end_comp_var.set(p.get("endereco", {}).get("comp", ""))
+        self.pag_var.set(p.get("pagamento", "Pix"))
+        self.status_var.set(p.get("status", "Pendente"))
+        self.taxa_var.set(f'{float(p.get("taxa", 0)):0.2f}'.replace(".", ","))
 
-        if p["entregador_nome"]:
+        if p.get("entregador_nome"):
+            # tenta achar na lista
             ent = next((e for e in self.entregadores if e["nome"] == p["entregador_nome"]), None)
             if ent:
                 self.combo_entregador.set(f'{ent["nome"]} • {ent["telefone"]}')
@@ -1019,32 +923,33 @@ class PaginaDelivery(ctk.CTkFrame):
                 self.combo_entregador.set(p["entregador_nome"])
 
         self._set_obs(p.get("obs", ""))
-        self.carrinho_itens = [dict(i) for i in p["itens"]]
+        self.carrinho_itens = [dict(i) for i in p.get("itens", [])]
         self._carregar_produtos_combo()
         self._render_itens()
         messagebox.showinfo("Editar", "Pedido carregado para edição.")
 
     def _remover_pedido_sel(self):
-        sel = self.tree.selection()
-        if not sel:
+        pid = self._pedido_id_por_sel()
+        if pid is None:
             messagebox.showwarning("Remover", "Selecione um pedido.")
-            return
-
-        tags = self.tree.item(sel[0], "tags")
-        if not tags:
-            return
-
-        p = self._pedido_por_tag(tags[0])
-        if not p:
             return
 
         if not messagebox.askyesno("Confirmar", "Deseja remover este pedido?"):
             return
 
-        self.entregas = [x for x in self.entregas if x["id"] != p["id"]]
-        self._render_entregas_dia()
+        metodo = self._obter_metodo_sistema("excluir_delivery")
+        if not metodo:
+            messagebox.showerror("Erro", "SistemaService não possui excluir_delivery().")
+            return
 
-        if self._pedido_em_edicao_id == p["id"]:
+        try:
+            metodo(pid)
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao remover.\n\n{e}")
+            return
+
+        if self._pedido_em_edicao_id == pid:
             self._limpar_form()
 
+        self._render_entregas_dia()
         messagebox.showinfo("Removido", "Pedido removido.")

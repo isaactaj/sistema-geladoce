@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+﻿# app/core/sistema.py
+from __future__ import annotations
 
 from datetime import datetime, date, timedelta
 from decimal import Decimal
@@ -17,12 +18,17 @@ from app.database.repositories.formas_pagamento_repository import FormasPagament
 from app.database.repositories.vendas_repository import VendasRepository
 from app.database.repositories.fechamentos_repository import FechamentosRepository
 from app.database.repositories.carrinhos_repository import CarrinhosRepository
+
+# ✅ IMPORT CORRETO (seu erro era aqui, com nome quebrado)
 from app.database.repositories.agendamentos_repository import AgendamentosRepository
+
+# ✅ NOVO
+from app.database.repositories.delivery_repository import DeliveryRepository
 
 
 class SistemaService:
     """
-    Núcleo central do sistema Geladoce.
+    Núcleo central do sistema Geladoce (MySQL).
     """
 
     def __init__(self):
@@ -38,6 +44,9 @@ class SistemaService:
         self.fechamentos_repo = FechamentosRepository()
         self.carrinhos_repo = CarrinhosRepository()
         self.agendamentos_repo = AgendamentosRepository()
+
+        # ✅ DELIVERY persistente
+        self.delivery_repo = DeliveryRepository()
 
         self._clientes_estado: Dict[int, Dict[str, Any]] = {}
 
@@ -105,8 +114,11 @@ class SistemaService:
             pass
         return None
 
-    def _somente_digitos(self, valor: Any) -> str:
-        return "".join(ch for ch in str(valor) if ch.isdigit())
+    def _salvar_estado_cliente(self, cliente_id: int, **campos) -> None:
+        if not cliente_id:
+            return
+        estado = self._clientes_estado.setdefault(int(cliente_id), {})
+        estado.update(campos)
 
     def _merge_estado_cliente(self, cliente: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not cliente:
@@ -120,12 +132,6 @@ class SistemaService:
             base.update(estado)
         return base
 
-    def _salvar_estado_cliente(self, cliente_id: int, **campos) -> None:
-        if not cliente_id:
-            return
-        estado = self._clientes_estado.setdefault(int(cliente_id), {})
-        estado.update(campos)
-
     def _atualizar_ultima_compra_db(self, cliente_id: int, data_ref: datetime) -> None:
         conn = None
         cur = None
@@ -133,7 +139,7 @@ class SistemaService:
             conn = conectar()
             cur = conn.cursor()
             cur.execute(
-                "UPDATE clientes SET ultima_compra = %s WHERE id = %s",
+                "UPDATE clientes SET ultima_compra=%s WHERE id=%s",
                 (data_ref, int(cliente_id)),
             )
             conn.commit()
@@ -288,34 +294,39 @@ class SistemaService:
         return self.funcionarios_repo.excluir_funcionario(funcionario_id)
 
     # ======================================================
-    # MOTORISTAS (EXTERNOS) ✅ usando FUNCIONARIOS (sem schema novo)
+    # MOTORISTAS (compat)
     # ======================================================
-    def salvar_motorista(self, nome, cpf, telefone, motorista_id=None):
-        # salva dentro de funcionarios para manter FK de agendamentos compatível
-        return self.salvar_funcionario(
+    def salvar_motorista(self, nome: str, cpf: str, telefone: str, motorista_id=None):
+        if hasattr(self.funcionarios_repo, "salvar_motorista"):
+            return self.funcionarios_repo.salvar_motorista(
+                nome=nome,
+                cpf=cpf,
+                telefone=telefone,
+                motorista_id=int(motorista_id) if motorista_id else None
+            )
+        return self.funcionarios_repo.salvar_funcionario(
             nome=nome,
+            cpf=cpf,
             telefone=telefone,
             cargo="Motorista",
-            funcionario_id=motorista_id,
-            cpf=cpf,
             tipo_acesso="Colaborador",
+            funcionario_id=int(motorista_id) if motorista_id else None,
         )
 
     def listar_motoristas(self, termo=""):
-        # filtra por cargo contendo "motor"/"motoboy"/"moto"
-        todos = self.listar_funcionarios(termo=termo)
-        out = []
-        for f in todos:
-            cargo = str(f.get("cargo") or "").lower()
-            if any(k in cargo for k in ("motor", "motoboy", "moto")):
-                out.append(f)
-        return out
+        if hasattr(self.funcionarios_repo, "listar_motoristas"):
+            return self.funcionarios_repo.listar_motoristas(termo=termo)
+        return self.funcionarios_repo.listar_funcionarios(termo=termo, cargo="Motorista")
 
     def obter_motorista(self, motorista_id):
-        return self.obter_funcionario(int(motorista_id))
+        if hasattr(self.funcionarios_repo, "obter_motorista"):
+            return self.funcionarios_repo.obter_motorista(int(motorista_id))
+        return self.funcionarios_repo.obter_funcionario(int(motorista_id))
 
     def excluir_motorista(self, motorista_id):
-        return self.excluir_funcionario(int(motorista_id))
+        if hasattr(self.funcionarios_repo, "excluir_motorista"):
+            return self.funcionarios_repo.excluir_motorista(int(motorista_id))
+        return self.funcionarios_repo.excluir_funcionario(int(motorista_id))
 
     # ======================================================
     # CARRINHOS
@@ -325,7 +336,7 @@ class SistemaService:
             nome=nome,
             capacidade=capacidade,
             status=status,
-            id_externo=id_externo,   # ✅ importante: nunca forçar ""
+            id_externo=id_externo,
             carrinho_id=carrinho_id,
         )
 
@@ -339,15 +350,16 @@ class SistemaService:
         return self.carrinhos_repo.excluir_carrinho(int(carrinho_id))
 
     # ======================================================
-    # AGENDAMENTOS ✅ (aceita quantidade_carrinhos e carrinho_preferido_id)
+    # AGENDAMENTOS
+    # (mantém compatibilidade; implementação real no repository)
     # ======================================================
     def salvar_agendamento(
         self,
         data,
         hora_inicio=None,
         hora_fim=None,
-        carrinho_id=None,          # compat antigo (vira "preferido")
-        funcionario_id=None,       # compat antigo
+        carrinho_id=None,
+        funcionario_id=None,
         local="",
         status="Agendado",
         observacao="",
@@ -356,14 +368,7 @@ class SistemaService:
         fim=None,
         motorista_id=None,
         obs=None,
-
-        # ✅ novos
-        quantidade_carrinhos=None,
-        qtd_carrinhos=None,
-        carrinho_preferido_id=None,
-
-        # ✅ tolerância a kwargs extras (não quebra UI)
-        **_,
+        **kwargs,
     ):
         data_ref = self._parse_date(data)
         if not data_ref:
@@ -371,45 +376,32 @@ class SistemaService:
 
         hora_ini = str(hora_inicio or inicio or "").strip()
         hora_fin = str(hora_fim or fim or "").strip()
-        inicio_min = self._hora_para_minutos(hora_ini)
+        ini_min = self._hora_para_minutos(hora_ini)
         fim_min = self._hora_para_minutos(hora_fin)
-
-        if inicio_min is None or fim_min is None:
+        if ini_min is None or fim_min is None:
             raise ValueError("Horários inválidos.")
-        if fim_min <= inicio_min:
+        if fim_min <= ini_min:
             raise ValueError("Hora final deve ser maior que a inicial.")
 
-        # qtd (aceita os 2 nomes)
-        qtd = quantidade_carrinhos if quantidade_carrinhos is not None else qtd_carrinhos
-        try:
-            qtd = int(qtd or 1)
-        except Exception:
-            qtd = 1
-        if qtd <= 0:
-            raise ValueError("Quantidade de carrinhos inválida.")
+        # motoristas compat
+        if motorista_id is None and funcionario_id not in (None, "", "None"):
+            motorista_id = funcionario_id
 
-        # carrinho preferido (aceita 2 nomes + compat carrinho_id)
-        prefer = carrinho_preferido_id if carrinho_preferido_id is not None else carrinho_id
-        prefer = int(prefer) if prefer not in (None, "", "None") else None
-
-        # motorista opcional: UI manda motorista_id (funcionarios.id)
-        mot = motorista_id if motorista_id is not None else funcionario_id
-        mot = int(mot) if mot not in (None, "", "None") else None
-
-        observacao_final = str(observacao or obs or "").strip()
+        # carrinho compat
+        if carrinho_id in (None, "", "None"):
+            raise ValueError("Selecione um carrinho.")
 
         return self.agendamentos_repo.salvar_agendamento(
             data=data_ref,
             inicio=hora_ini,
             fim=hora_fin,
-            inicio_min=inicio_min,
+            inicio_min=ini_min,
             fim_min=fim_min,
-            local=local,
-            qtd_carrinhos=qtd,
-            carrinho_preferido_id=prefer,
-            motorista_id=mot,
+            carrinho_id=int(carrinho_id),
+            motorista_id=int(motorista_id),
+            local=str(local or "").strip(),
             status=status,
-            obs=observacao_final,
+            obs=str(observacao or obs or "").strip(),
             agendamento_id=agendamento_id,
         )
 
@@ -417,7 +409,6 @@ class SistemaService:
         data_ref = self._parse_date(data) if data else None
         d_ini = self._parse_date(data_inicial) if data_inicial else None
         d_fim = self._parse_date(data_final) if data_final else None
-
         return self.agendamentos_repo.listar_agendamentos(
             data=data_ref,
             data_inicial=d_ini,
@@ -460,7 +451,7 @@ class SistemaService:
         return self.formas_repo.listar_formas()
 
     # ======================================================
-    # VENDAS ✅
+    # VENDAS
     # ======================================================
     def registrar_venda(
         self,
@@ -481,6 +472,11 @@ class SistemaService:
         if not itens:
             raise ValueError("A venda precisa ter ao menos 1 item.")
 
+        # compat: UI antiga manda cliente_id na revenda
+        if tipo == "REVENDA" and (revendedor_id is None) and (cliente_id is not None):
+            revendedor_id = cliente_id
+            cliente_id = None
+
         desconto_dec = self._to_decimal(desconto)
         taxa_entrega_dec = self._to_decimal(taxa_entrega)
         data_ref = self._parse_datetime(data_venda) if data_venda else datetime.now()
@@ -498,6 +494,7 @@ class SistemaService:
             status="FINALIZADA",
         )
 
+        # fidelidade automática
         cliente_para_pontos = venda.get("revendedor_id") if tipo == "REVENDA" else venda.get("cliente_id")
         if cliente_para_pontos:
             cliente = self.obter_cliente(cliente_para_pontos)
@@ -506,7 +503,6 @@ class SistemaService:
                 total_produtos = self._to_decimal(venda.get("subtotal", 0)) - self._to_decimal(venda.get("desconto", 0))
                 if total_produtos < 0:
                     total_produtos = Decimal("0")
-
                 pontos = self.calcular_pontos_rn05(cliente.get("tipo_cliente", "Varejo"), total_produtos)
                 if pontos > 0:
                     self.movimentar_fidelidade(
@@ -527,7 +523,154 @@ class SistemaService:
         return self.vendas_repo.listar_vendas(tipo=tipo_norm, data_inicial=dt_ini, data_final=dt_fim, incluir_itens=True)
 
     # ======================================================
-    # FECHAMENTO ✅
+    # DELIVERY (persistente + gera venda)
+    # ======================================================
+    def _status_delivery_gera_venda(self, status: str) -> bool:
+        return str(status or "").strip() in {"Em preparo", "Em rota", "Entregue"}
+
+    def salvar_pedido_delivery(self, pedido: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Recebe o dict no formato que a UI já usa:
+        {
+          id?, data, prev, cliente:{nome,telefone}, endereco:{...},
+          itens:[{id/produto_id, qtd, preco?}],
+          taxa, pagamento, status, entregador_id, obs
+        }
+        """
+        if not isinstance(pedido, dict):
+            raise ValueError("Pedido inválido.")
+
+        data_ref = self._parse_date(pedido.get("data"))
+        if not data_ref:
+            raise ValueError("Data do delivery inválida (use AAAA-MM-DD).")
+
+        prev = str(pedido.get("prev") or "").strip() or None
+
+        cliente = pedido.get("cliente") or {}
+        endereco = pedido.get("endereco") or {}
+
+        cliente_nome = str(cliente.get("nome") or "").strip()
+        cliente_tel = str(cliente.get("telefone") or "").strip()
+
+        itens_in = pedido.get("itens") or []
+        itens = []
+        for it in itens_in:
+            pid = it.get("produto_id", it.get("id"))
+            qtd = it.get("qtd")
+            itens.append({"produto_id": int(pid), "qtd": int(qtd)})
+
+        taxa = pedido.get("taxa", 0)
+        forma = pedido.get("pagamento") or pedido.get("forma_pagamento") or "Pix"
+        status = pedido.get("status") or "Pendente"
+        obs = pedido.get("obs") or pedido.get("observacao") or ""
+
+        entregador_id = pedido.get("entregador_id")
+        pedido_id = pedido.get("id")
+
+        salvo = self.delivery_repo.salvar_pedido(
+            pedido_id=int(pedido_id) if pedido_id else None,
+            data=data_ref,
+            prev_saida=prev,
+            cliente_id=None,
+            cliente_nome=cliente_nome,
+            cliente_telefone=cliente_tel,
+            end_rua=endereco.get("rua", ""),
+            end_num=endereco.get("numero", None),
+            end_bairro=endereco.get("bairro", ""),
+            end_cidade=endereco.get("cidade", "Belém"),
+            end_comp=endereco.get("comp", None),
+            entregador_id=int(entregador_id) if entregador_id not in (None, "", "None") else None,
+            forma_pagamento=forma,
+            status=status,
+            taxa_entrega=taxa,
+            obs=obs,
+            itens=itens,
+        )
+
+        # se status exige venda e ainda não tem venda_id -> registra venda e vincula
+        if self._status_delivery_gera_venda(salvo.get("status")) and not salvo.get("venda_id"):
+            venda = self.registrar_venda(
+                tipo="DELIVERY",
+                cliente_id=None,
+                itens=[{"produto_id": i["produto_id"], "qtd": i["qtd"]} for i in itens],
+                forma_pagamento=salvo.get("forma_pagamento"),
+                desconto=0,
+                taxa_entrega=salvo.get("taxa_entrega", 0),
+                observacao=salvo.get("obs") or "",
+                data_venda=str(data_ref),
+            )
+            self.delivery_repo.vincular_venda(int(salvo["id"]), int(venda["id"]))
+            salvo = self.delivery_repo.obter_pedido(int(salvo["id"])) or salvo
+
+        return self._normalizar_delivery_para_ui(salvo)
+
+    def _normalizar_delivery_para_ui(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        itens_ui = []
+        for it in (row.get("itens") or []):
+            itens_ui.append({
+                "id": int(it.get("produto_id")),
+                "nome": it.get("produto_nome") or "",
+                "preco": float(self._to_decimal(it.get("unitario", 0))),
+                "qtd": int(it.get("qtd") or 0),
+            })
+
+        return {
+            "id": int(row.get("id")),
+            "data": row.get("data"),
+            "prev": row.get("prev_saida") or "",
+            "cliente": {"nome": row.get("cliente_nome") or "", "telefone": row.get("cliente_telefone") or ""},
+            "endereco": {
+                "rua": row.get("end_rua") or "",
+                "numero": row.get("end_num") or "",
+                "bairro": row.get("end_bairro") or "",
+                "cidade": row.get("end_cidade") or "Belém",
+                "comp": row.get("end_comp") or "",
+            },
+            "itens": itens_ui,
+            "taxa": float(self._to_decimal(row.get("taxa_entrega", 0))),
+            "total": float(self._to_decimal(row.get("total", 0))),
+            "pagamento": row.get("forma_pagamento") or "Pix",
+            "status": row.get("status") or "Pendente",
+            "entregador_id": row.get("entregador_id"),
+            "entregador_nome": row.get("entregador_nome") or "",
+            "obs": row.get("obs") or "",
+            "venda_registrada": bool(row.get("venda_id")),
+            "venda_id": row.get("venda_id"),
+        }
+
+    def listar_delivery_dia(self, data_ref) -> List[Dict[str, Any]]:
+        dia = self._parse_date(data_ref) if data_ref else date.today()
+        if not dia:
+            dia = date.today()
+        rows = self.delivery_repo.listar_por_data(dia)
+        # lista é leve (sem itens). UI usa para tabela e, ao editar, chama obter_delivery.
+        saida = []
+        for r in rows:
+            saida.append({
+                "id": int(r["id"]),
+                "data": r.get("data"),
+                "prev": r.get("prev_saida") or "",
+                "cliente": {"nome": r.get("cliente_nome") or "", "telefone": r.get("cliente_telefone") or ""},
+                "total": float(self._to_decimal(r.get("total", 0))),
+                "status": r.get("status") or "Pendente",
+                "pagamento": r.get("forma_pagamento") or "Pix",
+                "taxa": float(self._to_decimal(r.get("taxa_entrega", 0))),
+                "entregador_id": r.get("entregador_id"),
+                "entregador_nome": r.get("entregador_nome") or "",
+                "venda_registrada": bool(r.get("venda_id")),
+                "venda_id": r.get("venda_id"),
+            })
+        return saida
+
+    def obter_delivery(self, pedido_id: int) -> Optional[Dict[str, Any]]:
+        row = self.delivery_repo.obter_pedido(int(pedido_id))
+        return self._normalizar_delivery_para_ui(row) if row else None
+
+    def excluir_delivery(self, pedido_id: int) -> None:
+        self.delivery_repo.excluir_pedido(int(pedido_id))
+
+    # ======================================================
+    # FECHAMENTO
     # ======================================================
     def salvar_fechamento(
         self,
@@ -548,7 +691,7 @@ class SistemaService:
         if not data_ref:
             raise ValueError("Data do fechamento inválida.")
 
-        fechamento = self.fechamentos_repo.salvar_fechamento(
+        return self.fechamentos_repo.salvar_fechamento(
             data=data_ref,
             caixa_inicial=self._to_decimal(caixa_inicial),
             sangria=self._to_decimal(sangria),
@@ -556,15 +699,11 @@ class SistemaService:
             observacao=str(observacao).strip(),
             responsavel_id=int(responsavel_id) if responsavel_id else None,
         )
-        return fechamento
 
     def listar_fechamentos(self, data_inicial=None, data_final=None):
         d_ini = self._parse_date(data_inicial) if data_inicial else None
         d_fim = self._parse_date(data_final) if data_final else None
         return self.fechamentos_repo.listar_fechamentos(data_inicial=d_ini, data_final=d_fim)
-
-    def listar_fechamento(self, data_inicial=None, data_final=None):
-        return self.listar_fechamentos(data_inicial=data_inicial, data_final=data_final)
 
     def obter_fechamento_por_data(self, data_ref):
         dia = self._parse_date(data_ref)
@@ -609,11 +748,7 @@ class SistemaService:
 
         for v in vendas:
             if tipo != "Todos":
-                tipo_map = {
-                    "Balcão": "BALCAO",
-                    "Revenda": "REVENDA",
-                    "Serviços": "DELIVERY",
-                }
+                tipo_map = {"Balcão": "BALCAO", "Revenda": "REVENDA", "Serviços": "DELIVERY"}
                 tipo_real = tipo_map.get(tipo, None)
                 if tipo_real and v["tipo"] != tipo_real:
                     continue

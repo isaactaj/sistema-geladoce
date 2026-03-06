@@ -8,40 +8,21 @@ from reportlab.pdfgen import canvas as pdf_canvas
 
 
 class GeradorComprovanteFechamento:
-    """
-    Responsável por gerar o PDF do comprovante de fechamento.
-
-    Comportamento:
-    - Se `output_dir` for informado no construtor, usa esse diretório.
-    - Se não for informado, usa por padrão:
-        geladocesistema/exports/fechamentos
-    - Se `gerar_pdf(..., caminho_arquivo=...)` receber um caminho explícito,
-      esse caminho terá prioridade.
-    """
-
     def __init__(self, output_dir=None):
-        # comprovante_fechamento.py -> app/pages/fechamento/comprovante_fechamento.py
-        # parents[3] = raiz do projeto (geladocesistema)
         base_project_dir = Path(__file__).resolve().parents[3]
         self.output_dir = Path(output_dir) if output_dir else (base_project_dir / "exports" / "fechamentos")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # =========================================================
-    # Helpers internos
-    # =========================================================
     def _to_decimal(self, valor):
         if isinstance(valor, Decimal):
             return valor
-
         txt = str(valor).strip().replace("R$", "").replace(" ", "")
         if not txt:
             return Decimal("0")
-
         if "," in txt and "." in txt:
             txt = txt.replace(".", "").replace(",", ".")
         else:
             txt = txt.replace(",", ".")
-
         try:
             return Decimal(txt)
         except Exception:
@@ -124,13 +105,9 @@ class GeradorComprovanteFechamento:
         else:
             nome_arquivo = self._montar_nome_arquivo(fechamento)
             caminho = self.output_dir / nome_arquivo
-
         caminho.parent.mkdir(parents=True, exist_ok=True)
         return caminho
 
-    # =========================================================
-    # Geração do PDF
-    # =========================================================
     def gerar_pdf(self, fechamento, caminho_arquivo=None):
         if not isinstance(fechamento, dict):
             raise ValueError("Os dados do fechamento devem ser enviados em um dicionário.")
@@ -147,6 +124,7 @@ class GeradorComprovanteFechamento:
         dinheiro = self._to_decimal(fechamento.get("dinheiro", 0))
         pix = self._to_decimal(fechamento.get("pix", 0))
         cartao = self._to_decimal(fechamento.get("cartao", 0))
+        prazo = self._to_decimal(fechamento.get("prazo", 0))
 
         sangria = self._to_decimal(fechamento.get("sangria", 0))
         caixa_inicial = self._to_decimal(fechamento.get("caixa_inicial", 0))
@@ -156,7 +134,7 @@ class GeradorComprovanteFechamento:
             fechamento.get("total_liquido", max(Decimal("0"), vendas_brutas - descontos - cancelamentos))
         )
         total_recebido = self._to_decimal(
-            fechamento.get("total_recebido", dinheiro + pix + cartao)
+            fechamento.get("total_recebido", dinheiro + pix + cartao + prazo)
         )
         previsto_em_caixa = self._to_decimal(
             fechamento.get("previsto_em_caixa", caixa_inicial + dinheiro - sangria)
@@ -236,6 +214,7 @@ class GeradorComprovanteFechamento:
             ("Dinheiro", self._fmt_moeda(dinheiro)),
             ("Pix", self._fmt_moeda(pix)),
             ("Cartão", self._fmt_moeda(cartao)),
+            ("Prazo", self._fmt_moeda(prazo)),
         ]
         for titulo, valor in linhas_recebimentos:
             if y < 3 * cm:
