@@ -1,17 +1,46 @@
 -- app/database/schema.sql
 -- ============================================================
--- SCHEMA GELADOCE (FULL - RECRIAR BANCO)
--- Charset padrão: utf8mb4
--- Engine padrão: InnoDB (FKs)
+-- SCHEMA GELADOCE (COMPATÍVEL COM O CÓDIGO ATUAL)
+-- MySQL 8.x / InnoDB / utf8mb4
 -- ============================================================
 
--- (Opcional) garante charset/colation em sessão
--- SET NAMES utf8mb4;
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
 
--- =========================
+-- Se estiver recriando do zero, essas linhas ajudam a reimportar sem dor:
+DROP VIEW IF EXISTS vw_fechamentos_resumo;
+
+DROP TABLE IF EXISTS delivery_itens;
+DROP TABLE IF EXISTS delivery_pedidos;
+
+DROP TABLE IF EXISTS mov_fidelidade;
+
+DROP TABLE IF EXISTS vendas_itens;
+DROP TABLE IF EXISTS vendas;
+
+DROP TABLE IF EXISTS fechamentos;
+
+DROP TABLE IF EXISTS estoque;
+DROP TABLE IF EXISTS produtos;
+
+DROP TABLE IF EXISTS agendamentos;
+
+DROP TABLE IF EXISTS carrinhos;
+
+DROP TABLE IF EXISTS usuarios;
+DROP TABLE IF EXISTS funcionarios;
+
+DROP TABLE IF EXISTS fornecedores;
+DROP TABLE IF EXISTS clientes;
+
+DROP TABLE IF EXISTS formas_pagamento;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- ============================================================
 -- 1) CLIENTES
--- =========================
-CREATE TABLE IF NOT EXISTS clientes (
+-- ============================================================
+CREATE TABLE clientes (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     cpf_cnpj VARCHAR(20) NOT NULL,
@@ -19,9 +48,12 @@ CREATE TABLE IF NOT EXISTS clientes (
     email VARCHAR(150) NULL,
     tipo_cliente ENUM('Varejo', 'Revendedor') NOT NULL DEFAULT 'Varejo',
     status ENUM('Ativo', 'Inativo') NOT NULL DEFAULT 'Ativo',
+
+    -- campos que seu sistema já usa/espera
     pontos_atuais INT NOT NULL DEFAULT 0,
     total_acumulado INT NOT NULL DEFAULT 0,
     ultima_compra DATETIME NULL,
+
     cadastro DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -33,11 +65,10 @@ CREATE TABLE IF NOT EXISTS clientes (
     KEY idx_clientes_tipo_cliente (tipo_cliente)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
+-- ============================================================
 -- 2) FORNECEDORES
--- =========================
-CREATE TABLE IF NOT EXISTS fornecedores (
+-- ============================================================
+CREATE TABLE fornecedores (
     id INT AUTO_INCREMENT PRIMARY KEY,
     razao VARCHAR(180) NOT NULL,
     cnpj VARCHAR(14) NOT NULL,
@@ -51,11 +82,10 @@ CREATE TABLE IF NOT EXISTS fornecedores (
     KEY idx_fornecedores_telefone (telefone)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
+-- ============================================================
 -- 3) FUNCIONÁRIOS
--- =========================
-CREATE TABLE IF NOT EXISTS funcionarios (
+-- ============================================================
+CREATE TABLE funcionarios (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     cpf VARCHAR(11) NOT NULL,
@@ -69,16 +99,13 @@ CREATE TABLE IF NOT EXISTS funcionarios (
     UNIQUE KEY uk_funcionarios_cpf (cpf),
     KEY idx_funcionarios_nome (nome),
     KEY idx_funcionarios_ativo (ativo),
-    KEY idx_funcionarios_tipo_acesso (tipo_acesso),
-    KEY idx_funcionarios_cargo (cargo)
+    KEY idx_funcionarios_tipo_acesso (tipo_acesso)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
--- 4) USUÁRIOS (LOGIN)
---  - FK por CPF conforme requisito
--- =========================
-CREATE TABLE IF NOT EXISTS usuarios (
+-- ============================================================
+-- 4) USUÁRIOS (LOGIN) — FK por CPF (como seu projeto já usa)
+-- ============================================================
+CREATE TABLE usuarios (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     login VARCHAR(60) NOT NULL,
@@ -98,11 +125,10 @@ CREATE TABLE IF NOT EXISTS usuarios (
         ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
+-- ============================================================
 -- 5) CARRINHOS
--- =========================
-CREATE TABLE IF NOT EXISTS carrinhos (
+-- ============================================================
+CREATE TABLE carrinhos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     id_externo VARCHAR(30) NOT NULL,
     nome VARCHAR(120) NOT NULL,
@@ -117,11 +143,10 @@ CREATE TABLE IF NOT EXISTS carrinhos (
     KEY idx_carrinhos_ativo (ativo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
+-- ============================================================
 -- 6) PRODUTOS
--- =========================
-CREATE TABLE IF NOT EXISTS produtos (
+-- ============================================================
+CREATE TABLE produtos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     categoria ENUM('Sorvete', 'Picolé', 'Açaí', 'Outros') NOT NULL DEFAULT 'Outros',
@@ -145,11 +170,10 @@ CREATE TABLE IF NOT EXISTS produtos (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
--- 7) ESTOQUE
--- =========================
-CREATE TABLE IF NOT EXISTS estoque (
+-- ============================================================
+-- 7) ESTOQUE (saldo atual)
+-- ============================================================
+CREATE TABLE estoque (
     produto_id INT PRIMARY KEY,
     quantidade INT NOT NULL DEFAULT 0,
 
@@ -159,11 +183,10 @@ CREATE TABLE IF NOT EXISTS estoque (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
--- 8) FORMAS DE PAGAMENTO
--- =========================
-CREATE TABLE IF NOT EXISTS formas_pagamento (
+-- ============================================================
+-- 8) FORMAS DE PAGAMENTO (códigos que seu código/GUI usa)
+-- ============================================================
+CREATE TABLE formas_pagamento (
     codigo VARCHAR(30) PRIMARY KEY,
     descricao VARCHAR(80) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -176,11 +199,10 @@ INSERT INTO formas_pagamento (codigo, descricao) VALUES
 ('Prazo', 'Pagamento a prazo')
 ON DUPLICATE KEY UPDATE descricao = VALUES(descricao);
 
-
--- =========================
--- 9) FECHAMENTOS
--- =========================
-CREATE TABLE IF NOT EXISTS fechamentos (
+-- ============================================================
+-- 9) FECHAMENTOS (por data, como seu FechamentosRepository usa)
+-- ============================================================
+CREATE TABLE fechamentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     data DATE NOT NULL,
 
@@ -204,11 +226,10 @@ CREATE TABLE IF NOT EXISTS fechamentos (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
--- 10) VENDAS
--- =========================
-CREATE TABLE IF NOT EXISTS vendas (
+-- ============================================================
+-- 10) VENDAS (BALCAO / REVENDA / DELIVERY)
+-- ============================================================
+CREATE TABLE vendas (
     id INT AUTO_INCREMENT PRIMARY KEY,
     tipo ENUM('BALCAO', 'REVENDA', 'DELIVERY') NOT NULL,
     status ENUM('ABERTA', 'FINALIZADA', 'CANCELADA') NOT NULL DEFAULT 'FINALIZADA',
@@ -256,11 +277,10 @@ CREATE TABLE IF NOT EXISTS vendas (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
+-- ============================================================
 -- 11) ITENS DA VENDA
--- =========================
-CREATE TABLE IF NOT EXISTS vendas_itens (
+-- ============================================================
+CREATE TABLE vendas_itens (
     id INT AUTO_INCREMENT PRIMARY KEY,
     venda_id INT NOT NULL,
     produto_id INT NOT NULL,
@@ -283,11 +303,10 @@ CREATE TABLE IF NOT EXISTS vendas_itens (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
--- 12) MOVIMENTAÇÕES DE FIDELIDADE
--- =========================
-CREATE TABLE IF NOT EXISTS mov_fidelidade (
+-- ============================================================
+-- 12) MOVIMENTAÇÕES DE FIDELIDADE (compatível com seu repo atual)
+-- ============================================================
+CREATE TABLE mov_fidelidade (
     id INT AUTO_INCREMENT PRIMARY KEY,
     cliente_id INT NOT NULL,
     acao ENUM('ADICIONAR', 'REMOVER', 'RESGATAR', 'BONUS', 'ZERAR') NOT NULL,
@@ -318,146 +337,52 @@ CREATE TABLE IF NOT EXISTS mov_fidelidade (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
--- 13) AGENDAMENTOS (com quantidade + opcionais)
--- =========================
-CREATE TABLE IF NOT EXISTS agendamentos (
+-- ============================================================
+-- 13) AGENDAMENTOS (formato do seu projeto atual)
+-- ============================================================
+CREATE TABLE agendamentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     data DATE NOT NULL,
     inicio VARCHAR(5) NOT NULL,
     fim VARCHAR(5) NOT NULL,
     inicio_min INT NOT NULL,
     fim_min INT NOT NULL,
-
-    quantidade_carrinhos INT NOT NULL DEFAULT 1,
-    carrinho_preferido_id INT NULL,
-    motorista_id INT NULL,
-
+    carrinho_id INT NOT NULL,
+    motorista_id INT NOT NULL,
     local VARCHAR(180) NOT NULL,
     status ENUM('Agendado', 'Confirmado', 'Cancelado') NOT NULL DEFAULT 'Agendado',
     obs TEXT NULL,
     cadastro DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     KEY idx_agendamentos_data (data),
+    KEY idx_agendamentos_carrinho_id (carrinho_id),
+    KEY idx_agendamentos_motorista_id (motorista_id),
     KEY idx_agendamentos_status (status),
-    KEY idx_agendamentos_carrinho_pref (carrinho_preferido_id),
-    KEY idx_agendamentos_motorista (motorista_id),
 
-    CONSTRAINT fk_agendamento_carrinho_pref
-        FOREIGN KEY (carrinho_preferido_id) REFERENCES carrinhos(id)
-        ON DELETE SET NULL
+    CONSTRAINT fk_agendamento_carrinho
+        FOREIGN KEY (carrinho_id) REFERENCES carrinhos(id)
+        ON DELETE RESTRICT
         ON UPDATE CASCADE,
 
-    CONSTRAINT fk_agendamento_motorista
+    CONSTRAINT fk_agendamento_funcionario
         FOREIGN KEY (motorista_id) REFERENCES funcionarios(id)
-        ON DELETE SET NULL
-        ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-
--- =========================
--- 14) DELIVERY (persistência real)
--- =========================
-CREATE TABLE IF NOT EXISTS delivery_pedidos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-
-    data DATE NOT NULL,
-    prev_saida VARCHAR(5) NOT NULL DEFAULT '00:30',
-
-    cliente_nome VARCHAR(150) NOT NULL,
-    cliente_telefone VARCHAR(30) NOT NULL,
-    cliente_id INT NULL,
-
-    end_rua VARCHAR(180) NOT NULL,
-    end_num VARCHAR(30) NULL,
-    end_bairro VARCHAR(120) NOT NULL,
-    end_cidade VARCHAR(120) NOT NULL DEFAULT 'Belém',
-    end_comp VARCHAR(180) NULL,
-
-    entregador_id INT NULL,
-
-    pagamento VARCHAR(30) NOT NULL,
-    status ENUM('Pendente','Em preparo','Em rota','Entregue','Cancelado') NOT NULL DEFAULT 'Pendente',
-
-    taxa_entrega DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-
-    venda_id INT NULL,
-    obs TEXT NULL,
-
-    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-    KEY idx_delivery_data (data),
-    KEY idx_delivery_status (status),
-    KEY idx_delivery_entregador (entregador_id),
-    KEY idx_delivery_venda (venda_id),
-    KEY idx_delivery_cliente_tel (cliente_telefone),
-
-    CONSTRAINT fk_delivery_cliente
-        FOREIGN KEY (cliente_id) REFERENCES clientes(id)
-        ON DELETE SET NULL
-        ON UPDATE CASCADE,
-
-    CONSTRAINT fk_delivery_entregador
-        FOREIGN KEY (entregador_id) REFERENCES funcionarios(id)
-        ON DELETE SET NULL
-        ON UPDATE CASCADE,
-
-    CONSTRAINT fk_delivery_pagamento
-        FOREIGN KEY (pagamento) REFERENCES formas_pagamento(codigo)
-        ON DELETE RESTRICT
-        ON UPDATE CASCADE,
-
-    CONSTRAINT fk_delivery_venda
-        FOREIGN KEY (venda_id) REFERENCES vendas(id)
-        ON DELETE SET NULL
-        ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-
-CREATE TABLE IF NOT EXISTS delivery_itens (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    pedido_id INT NOT NULL,
-    produto_id INT NOT NULL,
-
-    qtd INT NOT NULL,
-    unitario DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-
-    KEY idx_delivery_itens_pedido (pedido_id),
-    KEY idx_delivery_itens_produto (produto_id),
-
-    CONSTRAINT fk_delivery_itens_pedido
-        FOREIGN KEY (pedido_id) REFERENCES delivery_pedidos(id)
-        ON DELETE CASCADE
-        ON UPDATE CASCADE,
-
-    CONSTRAINT fk_delivery_itens_produto
-        FOREIGN KEY (produto_id) REFERENCES produtos(id)
         ON DELETE RESTRICT
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- =========================
--- 15) DELIVERY: PEDIDOS
--- =========================
-CREATE TABLE IF NOT EXISTS delivery_pedidos (
+-- ============================================================
+-- 14) DELIVERY (persistente) - compatível com a integração atual
+-- ============================================================
+CREATE TABLE delivery_pedidos (
     id INT AUTO_INCREMENT PRIMARY KEY,
 
     data DATE NOT NULL,
     prev_saida VARCHAR(5) NULL,
 
-    -- opcional: se você quiser vincular ao cliente cadastrado
-    cliente_id INT NULL,
-
-    -- snapshot (sempre salva, mesmo sem cliente_id)
+    cliente_id INT NULL, -- opcional (se um dia você quiser vincular)
     cliente_nome VARCHAR(150) NOT NULL,
     cliente_telefone VARCHAR(30) NOT NULL,
 
-    -- endereço (snapshot)
     end_rua VARCHAR(180) NOT NULL,
     end_num VARCHAR(20) NULL,
     end_bairro VARCHAR(120) NOT NULL,
@@ -475,7 +400,6 @@ CREATE TABLE IF NOT EXISTS delivery_pedidos (
 
     obs TEXT NULL,
 
-    -- quando o status gera venda, vinculamos aqui
     venda_id INT NULL,
 
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -508,11 +432,7 @@ CREATE TABLE IF NOT EXISTS delivery_pedidos (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- =========================
--- 16) DELIVERY: ITENS
--- =========================
-CREATE TABLE IF NOT EXISTS delivery_itens (
+CREATE TABLE delivery_itens (
     id INT AUTO_INCREMENT PRIMARY KEY,
     pedido_id INT NOT NULL,
     produto_id INT NOT NULL,
@@ -535,9 +455,9 @@ CREATE TABLE IF NOT EXISTS delivery_itens (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- =========================
--- 1) VIEW: RESUMO DE FECHAMENTO
--- =========================
+-- ============================================================
+-- 15) VIEW: RESUMO DE FECHAMENTO (compatível)
+-- ============================================================
 CREATE OR REPLACE VIEW vw_fechamentos_resumo AS
 SELECT
     f.id AS fechamento_id,
