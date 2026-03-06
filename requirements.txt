@@ -1,6 +1,8 @@
-customtkinter
-pillow
-matplotlib
-pandas
-openpyxl
-reportlab
+customtkinter>=5.2.2
+pillow>=10.0.0
+matplotlib>=3.8.0
+pandas>=2.2.0
+openpyxl>=3.1.2
+reportlab>=4.2.0
+CTkMessagebox>=2.7
+tzdata==2025.3

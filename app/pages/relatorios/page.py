@@ -1,7 +1,6 @@
 import customtkinter as ctk
 import datetime as dt
-import random
-import calendar
+from pathlib import Path
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -14,7 +13,7 @@ from app.pages.relatorios.export import exportar_excel, exportar_pdf
 
 
 # ============================================================
-# Widget: Card de gráfico responsivo (mesmo que você já usa)
+# Widget: Card de gráfico responsivo
 # ============================================================
 class CardGraficoResponsivo(ctk.CTkFrame):
     def __init__(self, master, titulo: str, ratio: float = 0.60):
@@ -67,8 +66,24 @@ class CardGraficoResponsivo(ctk.CTkFrame):
 # Página: Relatórios
 # ============================================================
 class PaginaAdminRelatorios(ctk.CTkFrame):
-    def __init__(self, master):
+    def __init__(self, master, sistema=None):
         super().__init__(master, fg_color=COR_FUNDO)
+
+        self.sistema = sistema
+        self._dados_dashboard = {
+            "faturamento": 0.0,
+            "qtd_vendas": 0,
+            "ticket_medio": 0.0,
+            "serie_por_dia": {},
+            "top_produtos": [],
+            "vendas": [],
+            "taxas_entrega": 0.0,
+        }
+
+        # Caminho fixo para exportações:
+        # geladocesistema/exports/relatorios
+        self.diretorio_exports_relatorios = Path(__file__).resolve().parents[3] / "exports" / "relatorios"
+        self.diretorio_exports_relatorios.mkdir(parents=True, exist_ok=True)
 
         # Grid base da página
         self.grid_columnconfigure((0, 1), weight=1)
@@ -183,7 +198,7 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
         self.btn_ano_next.grid(row=0, column=4, padx=(6, 0))
 
     # -------------------------
-    # UI: KPIs “inteligentes”
+    # UI: KPIs
     # -------------------------
     def _criar_cards_kpi(self):
         self.container_cards = ctk.CTkFrame(self, fg_color="transparent")
@@ -299,33 +314,13 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
         self.atualizar_dashboard()
 
     # -------------------------
-    # Helpers KPI
+    # Helpers
     # -------------------------
-    def _mes_ano_anterior(self, mes, ano):
-        mes -= 1
-        if mes == 0:
-            mes = 12
-            ano -= 1
-        return mes, ano
-
-    def _cor_delta(self, delta):
-        if delta is None:
-            return COR_TEXTO_SEC
-        if delta > 0:
-            return "#2E7D32"
-        if delta < 0:
-            return "#C62828"
-        return COR_TEXTO_SEC
-
     def _fmt_dinheiro(self, valor):
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    def _fmt_percentual(self, delta):
-        # delta vem como 0.12 -> "12%"
-        return f"{delta*100:.0f}%"
-
     # -------------------------
-    # Estado da tela (útil pra export e futuro DB)
+    # Estado da tela
     # -------------------------
     def get_state(self):
         return {
@@ -334,6 +329,8 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
             "tipo": self.combo_tipo.get(),
             "categoria": self.combo_categoria.get(),
             "periodo": self.lbl_periodo.cget("text"),
+            "dados_relatorio": self._dados_dashboard,
+            "output_dir": self.diretorio_exports_relatorios,
         }
 
     # -------------------------
@@ -341,95 +338,105 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
     # -------------------------
     def atualizar_dashboard(self):
         nomes_meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-        self.lbl_periodo.configure(text=f"{nomes_meses[self.mes-1]}/{self.ano}")
+        self.lbl_periodo.configure(text=f"{nomes_meses[self.mes - 1]}/{self.ano}")
 
-        tipo = self.combo_tipo.get()
-        categoria = self.combo_categoria.get()
+        try:
+            dados = self.sistema.dados_relatorio(
+                mes=self.mes,
+                ano=self.ano,
+                tipo=self.combo_tipo.get(),
+                categoria=self.combo_categoria.get(),
+            )
+        except Exception:
+            dados = {
+                "faturamento": 0,
+                "qtd_vendas": 0,
+                "ticket_medio": 0,
+                "serie_por_dia": {},
+                "top_produtos": [],
+                "vendas": [],
+                "taxas_entrega": 0,
+            }
 
-        mes_ant, ano_ant = self._mes_ano_anterior(self.mes, self.ano)
+        self._dados_dashboard = dados
 
-        # seeds consistentes (atual e anterior)
-        seed_atual = hash((self.ano, self.mes, tipo, categoria))
-        seed_anterior = hash((ano_ant, mes_ant, tipo, categoria))
+        faturamento = float(dados.get("faturamento", 0))
+        vendas = int(dados.get("qtd_vendas", 0))
+        ticket = float(dados.get("ticket_medio", 0))
 
-        rng_atual = random.Random(seed_atual)
-        rng_ant = random.Random(seed_anterior)
-
-        # Valores mês atual
-        faturamento_mes = rng_atual.randint(12000, 26000)
-        vendas_mes = rng_atual.randint(700, 1700)
-
-        # Valores mês anterior
-        faturamento_ant = rng_ant.randint(12000, 26000)
-        vendas_ant = rng_ant.randint(700, 1700)
-
-        # deltas
-        delta_faturamento = None if faturamento_ant == 0 else (faturamento_mes - faturamento_ant) / faturamento_ant
-        delta_vendas = None if vendas_ant == 0 else (vendas_mes - vendas_ant) / vendas_ant
-
-        ticket = (faturamento_mes / vendas_mes) if vendas_mes else 0
-        ticket_ant = (faturamento_ant / vendas_ant) if vendas_ant else 0
-        delta_ticket = None if ticket_ant == 0 else (ticket - ticket_ant) / ticket_ant
-
-        # KPIs: Faturamento
+        # KPI: Faturamento
         lbl_v, lbl_d, lbl_s = self.kpis["faturamento"]
-        lbl_v.configure(text=self._fmt_dinheiro(faturamento_mes))
-        lbl_d.configure(text=self._fmt_percentual(delta_faturamento) if delta_faturamento is not None else "")
-        lbl_d.configure(text_color=self._cor_delta(delta_faturamento))
-        lbl_s.configure(text=f"vs {calendar.month_name[mes_ant]} {ano_ant}")
+        lbl_v.configure(text=self._fmt_dinheiro(faturamento))
+        lbl_d.configure(text="")
+        lbl_s.configure(text="Valor real do período")
 
-        # KPIs: Vendas
+        # KPI: Vendas
         lbl_v, lbl_d, lbl_s = self.kpis["vendas"]
-        lbl_v.configure(text=f"{vendas_mes}")
-        lbl_d.configure(text=self._fmt_percentual(delta_vendas) if delta_vendas is not None else "")
-        lbl_d.configure(text_color=self._cor_delta(delta_vendas))
-        lbl_s.configure(text=f"vs {calendar.month_name[mes_ant]} {ano_ant}")
+        lbl_v.configure(text=str(vendas))
+        lbl_d.configure(text="")
+        lbl_s.configure(text="Quantidade real de vendas")
 
-        # KPIs: Ticket médio
+        # KPI: Ticket médio
         lbl_v, lbl_d, lbl_s = self.kpis["ticket"]
         lbl_v.configure(text=self._fmt_dinheiro(ticket))
-        lbl_d.configure(text=self._fmt_percentual(delta_ticket) if delta_ticket is not None else "")
-        lbl_d.configure(text_color=self._cor_delta(delta_ticket))
+        lbl_d.configure(text="")
         lbl_s.configure(text="Faturamento ÷ Vendas")
 
-        # --------- Gráfico 1 (linha)
-        dias = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
-        serie = [rng_atual.randint(600, 2500) for _ in dias]
+        # --------- Gráfico 1: faturamento por dia
+        serie = dados.get("serie_por_dia", {}) or {}
+        dias = sorted(serie.keys())
+        valores = [float(serie[d]) for d in dias]
 
         def plot_faturamento(ax):
-            ax.plot(dias, serie, marker="o")
-            ax.set_ylabel("R$")
-            ax.set_title("")
+            if dias and valores:
+                ax.plot(dias, valores, marker="o")
+                ax.set_ylabel("R$")
+                ax.set_title("")
+                ax.set_xticks(dias)
+            else:
+                ax.text(
+                    0.5, 0.5,
+                    "Sem vendas no período",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes
+                )
+                ax.set_ylabel("R$")
+                ax.set_title("")
+                ax.set_xticks([])
 
         self.graf1.atualizar_plot(plot_faturamento)
 
-        # --------- Gráfico 2 (barras)
-        produtos = self._produtos_por_categoria(categoria)
-        qtd = [rng_atual.randint(80, 420) for _ in produtos]
+        # --------- Gráfico 2: top produtos
+        top = dados.get("top_produtos", []) or []
+        nomes = [x[0] for x in top]
+        qtds = [x[1] for x in top]
 
         def plot_produtos(ax):
-            ax.bar(produtos, qtd)
-            ax.set_ylabel("Qtd")
-            ax.set_title("")
+            if nomes and qtds:
+                ax.bar(nomes, qtds)
+                ax.set_ylabel("Qtd")
+                ax.set_title("")
+                ax.tick_params(axis="x", rotation=25)
+            else:
+                ax.text(
+                    0.5, 0.5,
+                    "Sem produtos vendidos",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes
+                )
+                ax.set_ylabel("Qtd")
+                ax.set_title("")
+                ax.set_xticks([])
 
         self.graf2.atualizar_plot(plot_produtos)
 
-    def _produtos_por_categoria(self, categoria):
-        if categoria == "Sorvete":
-            return ["Chocolate", "Baunilha", "Morango", "Flocos"]
-        if categoria == "Picolé":
-            return ["Limão", "Uva", "Abacaxi", "Coco"]
-        if categoria == "Açaí":
-            return ["Açaí Puro", "Açaí c/ Morango", "Açaí c/ Banana", "Açaí c/ Granola"]
-        if categoria == "Outros":
-            return ["Caldinho", "Milkshake", "Café Gelado", "Churros"]
-        return ["Chocolate", "Açaí", "Café Gelado", "Flocos"]
-
     # -------------------------
-    # Botões exportação -> chamam export.py
+    # Botões exportação
     # -------------------------
     def on_export_excel(self):
-        exportar_excel(self)
+        exportar_excel(self, output_dir=self.diretorio_exports_relatorios)
 
     def on_export_pdf(self):
-        exportar_pdf(self)
+        exportar_pdf(self, output_dir=self.diretorio_exports_relatorios)
