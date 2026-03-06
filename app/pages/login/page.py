@@ -273,7 +273,7 @@ class TelaLogin(ctk.CTkFrame):
 
         win = ctk.CTkToplevel(self)
         win.title("Criar novo usuário")
-        win.geometry("460x460")
+        win.geometry("460x600")
         win.transient(self.winfo_toplevel())
         win.grab_set()
 
