@@ -734,6 +734,39 @@ class SistemaService:
     # ======================================================
     # RELATÓRIOS
     # ======================================================
+    def obter_ultima_venda_data(self) -> Optional[datetime]:
+        conn = None
+        cur = None
+        try:
+            conn = conectar()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT MAX(data)
+                FROM vendas
+                WHERE status <> 'CANCELADA'
+            """)
+            row = cur.fetchone()
+            if row and row[0]:
+                return self._parse_datetime(row[0])
+            return None
+        except Exception:
+            return None
+        finally:
+            try:
+                if cur is not None:
+                    cur.close()
+            finally:
+                if conn is not None and conn.is_connected():
+                    conn.close()
+
+    def obter_periodo_relatorio_inicial(self):
+        ultima = self.obter_ultima_venda_data()
+        if ultima:
+            return ultima.month, ultima.year
+
+        hoje = datetime.now()
+        return hoje.month, hoje.year
+
     def dados_relatorio(self, mes, ano, tipo="Todos", categoria="Todos"):
         mes = int(mes)
         ano = int(ano)
@@ -749,54 +782,98 @@ class SistemaService:
             data_inicial=dt_ini,
             data_final=dt_fim,
             incluir_itens=True,
-        )
+        ) or []
+
+        tipo_map = {
+            "Todos": None,
+            "Balcão": "BALCAO",
+            "Balcao": "BALCAO",
+            "Revenda": "REVENDA",
+            "Delivery": "DELIVERY",
+            "Serviços": "DELIVERY",
+            "Servicos": "DELIVERY",
+        }
+        tipo_real = tipo_map.get(str(tipo).strip(), None)
+        categoria_filtro = str(categoria).strip()
 
         vendas_filtradas = []
         faturamento = Decimal("0")
         qtd_vendas = 0
         serie_por_dia: Dict[int, Decimal] = {}
         produtos_vendidos: Dict[str, int] = {}
+        produtos_distintos = set()
         taxas_entrega = Decimal("0")
+        ultima_venda = None
 
         for v in vendas:
-            if tipo != "Todos":
-                tipo_map = {"Balcão": "BALCAO", "Revenda": "REVENDA", "Serviços": "DELIVERY"}
-                tipo_real = tipo_map.get(tipo, None)
-                if tipo_real and v["tipo"] != tipo_real:
-                    continue
-
-            valor_considerado = Decimal("0")
-            itens_considerados = []
-
-            for item in v.get("itens", []):
-                if categoria != "Todos" and item.get("categoria") != categoria:
-                    continue
-
-                valor_considerado += self._to_decimal(item.get("total", 0))
-                itens_considerados.append(item)
-
-                nome_prod = item.get("produto_nome") or item.get("nome") or ""
-                produtos_vendidos[nome_prod] = produtos_vendidos.get(nome_prod, 0) + int(item.get("qtd", 0))
-
-            if categoria != "Todos" and not itens_considerados:
+            status_v = str(v.get("status", "")).strip().upper()
+            if status_v == "CANCELADA":
                 continue
 
-            if categoria == "Todos":
-                valor_considerado = self._to_decimal(v.get("total", 0))
-                taxas_entrega += self._to_decimal(v.get("taxa_entrega", 0))
+            tipo_v = str(v.get("tipo", "")).strip().upper()
+            if tipo_real and tipo_v != tipo_real:
+                continue
 
-            vendas_filtradas.append(v)
+            data_venda = self._parse_datetime(v.get("data"))
+            itens_base = list(v.get("itens") or [])
+
+            if categoria_filtro == "Todos":
+                itens_considerados = itens_base
+                valor_considerado = self._to_decimal(v.get("total", 0))
+                if valor_considerado < 0:
+                    valor_considerado = Decimal("0")
+
+                taxa = self._to_decimal(v.get("taxa_entrega", 0))
+                if taxa > 0:
+                    taxas_entrega += taxa
+            else:
+                itens_considerados = []
+                valor_considerado = Decimal("0")
+
+                for item in itens_base:
+                    categoria_item = str(item.get("categoria") or "").strip()
+                    if categoria_item != categoria_filtro:
+                        continue
+
+                    itens_considerados.append(item)
+
+                    total_item = self._to_decimal(item.get("total", 0))
+                    if total_item > 0:
+                        valor_considerado += total_item
+
+                if not itens_considerados:
+                    continue
+
+            for item in itens_considerados:
+                nome_prod = str(item.get("produto_nome") or item.get("nome") or "").strip()
+                qtd_item = int(item.get("qtd", 0) or 0)
+
+                if nome_prod:
+                    produtos_vendidos[nome_prod] = produtos_vendidos.get(nome_prod, 0) + qtd_item
+                    produtos_distintos.add(nome_prod)
+
+            venda_saida = dict(v)
+            venda_saida["itens"] = itens_considerados
+
+            vendas_filtradas.append(venda_saida)
             faturamento += valor_considerado
             qtd_vendas += 1
 
-            dia = v["data"].day if isinstance(v["data"], datetime) else self._parse_datetime(v["data"]).day
+            dia = data_venda.day
             serie_por_dia[dia] = serie_por_dia.get(dia, Decimal("0")) + valor_considerado
+
+            if ultima_venda is None or data_venda > ultima_venda:
+                ultima_venda = data_venda
 
         ticket_medio = Decimal("0")
         if qtd_vendas > 0:
             ticket_medio = faturamento / qtd_vendas
 
-        top_produtos = sorted(produtos_vendidos.items(), key=lambda x: x[1], reverse=True)[:10]
+        top_produtos = sorted(
+            produtos_vendidos.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:10]
 
         return {
             "faturamento": faturamento,
@@ -806,4 +883,7 @@ class SistemaService:
             "top_produtos": top_produtos,
             "vendas": vendas_filtradas,
             "taxas_entrega": taxas_entrega,
+            "qtd_produtos_distintos": len(produtos_distintos),
+            "ultima_venda": ultima_venda,
+            "possui_dados": qtd_vendas > 0,
         }

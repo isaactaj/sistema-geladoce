@@ -1,36 +1,35 @@
-# app/database/config.py
-
 import os
-
 
 # ============================================================
 # CONFIGURAÇÃO DO BANCO DE DADOS
 # ============================================================
-# Aqui eu centralizo as configurações do MySQL para não
-# espalhar host, usuário e senha em vários arquivos.
+# Banco real do sistema:
+#   geladoce
 #
-# Como estou usando WAMP localmente, o mais comum é:
-# - host: 127.0.0.1
-# - port: 3306
-# - user: root
-# - password: "" (vazio, dependendo da instalação)
-#
-# Se eu mudar a senha ou o nome do banco depois,
-# basta ajustar aqui.
 # ============================================================
 
-DB_HOST = os.getenv("GELADOCE_DB_HOST", "127.0.0.1")
-DB_PORT = int(os.getenv("GELADOCE_DB_PORT", "3306"))
-DB_USER = os.getenv("GELADOCE_DB_USER", "root")
-DB_PASSWORD = os.getenv("GELADOCE_DB_PASSWORD", "")
-DB_NAME = os.getenv("GELADOCE_DB_NAME", "geladoce")
+
+def _env_first(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return default
 
 
-def get_db_config(include_database=True):
+DB_HOST = _env_first("GELADOCE_DB_HOST", "DB_HOST", default="127.0.0.1")
+DB_PORT = int(_env_first("GELADOCE_DB_PORT", "DB_PORT", default="3306"))
+DB_USER = _env_first("GELADOCE_DB_USER", "DB_USER", default="root")
+DB_PASSWORD = _env_first("GELADOCE_DB_PASSWORD", "DB_PASSWORD", default="")
+
+# ✅ Banco real do sistema
+DB_NAME = _env_first("GELADOCE_DB_NAME", "DB_NAME", default="geladoce")
+
+
+def get_db_config(include_database: bool = True) -> dict:
     """
-    Aqui eu monto o dicionário padrão de conexão.
-    Se include_database=False, eu conecto sem selecionar um banco,
-    o que é útil para criar o schema pela primeira vez.
+    Monta a configuração padrão de conexão com MySQL.
+    Se include_database=False, conecta sem selecionar um banco.
     """
     config = {
         "host": DB_HOST,

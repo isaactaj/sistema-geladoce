@@ -1,4 +1,3 @@
-# main.py
 from pathlib import Path
 
 import customtkinter as ctk
@@ -9,13 +8,8 @@ from app.ui.sidebar import MenuLateral
 from app.core.navigation import Navigation
 from app.pages.login.page import TelaLogin
 
-from app.database.connection import (
-    criar_banco_se_nao_existir,
-    criar_tabelas_se_nao_existirem,
-    testar_conexao,
-)
-
-# ✅ Agora o main depende do núcleo central, não do repo direto
+from app.database.connection import testar_conexao
+from app.database.config import DB_NAME
 from app.core.sistema import SistemaService
 
 
@@ -33,7 +27,7 @@ class SistemaGeladoce(ctk.CTk):
 
         self._configurar_icone()
 
-        # ✅ Núcleo do sistema (fonte da verdade)
+        # Núcleo central do sistema
         self.sistema = SistemaService()
 
         self.usuario_logado = None
@@ -42,11 +36,10 @@ class SistemaGeladoce(ctk.CTk):
         self.area = None
         self.tela_login = None
 
-        # ✅ Admin padrão deve ser garantido DEPOIS do bootstrap do banco (feito antes no main())
+        # Garante o admin padrão apenas no banco já existente
         try:
             self.sistema.garantir_admin_padrao()
         except Exception as e:
-            # não impede abrir o sistema, mas deixa rastreável
             print(f"Aviso ao preparar usuário padrão: {e}")
 
         if MODO_DESENVOLVIMENTO_SEM_LOGIN:
@@ -93,12 +86,10 @@ class SistemaGeladoce(ctk.CTk):
         self.geometry("980x560")
         self.minsize(920, 520)
 
-        # Layout da tela de login
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=0)
 
-        # ✅ Callbacks passam pelo SistemaService (contrato central)
         self.tela_login = TelaLogin(
             self,
             autenticar_callback=self.sistema.autenticar,
@@ -119,12 +110,10 @@ class SistemaGeladoce(ctk.CTk):
         self.geometry("1100x680")
         self.minsize(1000, 620)
 
-        # Layout principal
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
 
-        # Sidebar
         self.menu = MenuLateral(
             self,
             self.navegar,
@@ -132,15 +121,12 @@ class SistemaGeladoce(ctk.CTk):
         )
         self.menu.grid(row=0, column=0, sticky="ns")
 
-        # Conteúdo
         self.area = Navigation(
             self,
             usuario_logado=self.usuario_logado,
         )
         self.area.grid(row=0, column=1, sticky="nsew")
 
-        # ✅ Injeta o service no menu e na área sem quebrar __init__ existente
-        # (assim páginas conseguem acessar self.master.sistema / self.sistema)
         try:
             setattr(self.menu, "sistema", self.sistema)
         except Exception:
@@ -151,21 +137,17 @@ class SistemaGeladoce(ctk.CTk):
         except Exception:
             pass
 
-        # Atualiza usuário no sidebar
         if hasattr(self.menu, "set_usuario_logado"):
             self.menu.set_usuario_logado(self.usuario_logado)
         elif hasattr(self.menu, "atualizar_usuario"):
             self.menu.atualizar_usuario(self.usuario_logado.get("nome", "Usuário"))
 
-        # Atualiza usuário na navegação
         if hasattr(self.area, "set_usuario_logado"):
             self.area.set_usuario_logado(self.usuario_logado)
 
-        # Ação do botão do rodapé (trocar usuário / logout)
         if hasattr(self.menu, "configurar_acao_usuario"):
             self.menu.configurar_acao_usuario(self.confirmar_troca_usuario)
 
-        # Página inicial
         if hasattr(self.menu, "marcar_ativo"):
             self.menu.marcar_ativo("inicio")
 
@@ -192,10 +174,6 @@ class SistemaGeladoce(ctk.CTk):
     # NAVEGAÇÃO
     # ======================================================
     def navegar(self, chave: str):
-        """
-        Navega para a rota informada e só marca como ativa
-        se a navegação realmente aconteceu.
-        """
         if self.area is None:
             return
 
@@ -218,20 +196,15 @@ class SistemaGeladoce(ctk.CTk):
 
 def iniciar_banco() -> bool:
     """
-    Inicializa o banco antes de abrir a interface.
-    1) Garante que o banco exista.
-    2) Garante schema/tabelas/views/seeds.
-    3) Testa conexão.
+    Apenas testa a conexão com o banco já existente.
+    Não cria banco, não cria tabelas e não executa schema.sql.
     """
     try:
-        criar_banco_se_nao_existir()
-        criar_tabelas_se_nao_existirem()
-
         if testar_conexao():
-            print("Conexão com MySQL funcionando com sucesso.")
+            print(f"Conexão com MySQL funcionando com sucesso. Banco atual: '{DB_NAME}'.")
             return True
 
-        print("Falha ao conectar com MySQL.")
+        print(f"Falha ao conectar com MySQL no banco '{DB_NAME}'.")
         return False
 
     except Exception as e:
@@ -240,10 +213,6 @@ def iniciar_banco() -> bool:
 
 
 def _mostrar_erro_banco_e_sair():
-    """
-    Mostra popup amigável e encerra.
-    Útil porque CTkMessagebox precisa de um root.
-    """
     root = ctk.CTk()
     root.withdraw()
 
@@ -254,7 +223,7 @@ def _mostrar_erro_banco_e_sair():
             "Checklist rápido:\n"
             "• MySQL está ligado (WAMP/XAMPP)?\n"
             "• DB_HOST/DB_PORT/DB_USER/DB_PASSWORD corretos em app/database/config.py\n"
-            f"• Banco '{theme.__dict__.get('DB_NAME', 'geladoce')}' existe ou pode ser criado\n\n"
+            f"• Banco '{DB_NAME}' existe e está acessível\n\n"
             "Depois de corrigir, abra o sistema novamente."
         ),
         icon="cancel",

@@ -35,9 +35,9 @@ class Navigation(ctk.CTkFrame):
     Área principal (conteúdo). Troca páginas conforme uma chave.
 
     Revisão:
-    - NÃO cria SistemaService novo aqui. Reusa o service do master (main app),
-      ou aceita injeção via parâmetro.
-    - Injeta 'sistema' e 'usuario_logado' nas páginas se elas aceitarem.
+    - Reusa o SistemaService do app principal
+    - Injeta sistema e usuário logado de forma explícita
+    - Faz fallback pós-instanciação para páginas que não recebam kwargs
     """
 
     ROTAS_ADMIN = {"relatorios", "funcionarios"}
@@ -51,8 +51,6 @@ class Navigation(ctk.CTkFrame):
         self.pagina_atual = None
         self.chave_atual = None
 
-        # ✅ Fonte da verdade: tentar pegar do master; senão usa o parâmetro; senão cria.
-        # (Criar aqui é último fallback para não quebrar em testes isolados.)
         self.sistema = (
             getattr(master, "sistema", None)
             or sistema
@@ -85,12 +83,16 @@ class Navigation(ctk.CTkFrame):
     def set_usuario_logado(self, usuario: dict):
         self.usuario_logado = usuario or {}
 
-        # Se o usuário atual não tem permissão e estava numa rota admin, volta pro início
         if (self.chave_atual in self.ROTAS_ADMIN) and (not self._is_admin()):
             self.show("inicio")
+            return
 
-        # Se a página atual quiser reagir a mudança de usuário, permite
         if self.pagina_atual is not None:
+            try:
+                setattr(self.pagina_atual, "usuario_logado", self.usuario_logado)
+            except Exception:
+                pass
+
             if hasattr(self.pagina_atual, "set_usuario_logado"):
                 try:
                     self.pagina_atual.set_usuario_logado(self.usuario_logado)
@@ -116,6 +118,26 @@ class Navigation(ctk.CTkFrame):
             return False
         return nome_param in sig.parameters
 
+    def _injetar_dependencias_pos_instanciacao(self, pagina):
+        try:
+            if getattr(pagina, "sistema", None) is None:
+                setattr(pagina, "sistema", self.sistema)
+        except Exception:
+            pass
+
+        try:
+            atual = getattr(pagina, "usuario_logado", None)
+            if atual is None:
+                setattr(pagina, "usuario_logado", self.usuario_logado)
+        except Exception:
+            pass
+
+        if hasattr(pagina, "set_usuario_logado"):
+            try:
+                pagina.set_usuario_logado(self.usuario_logado)
+            except Exception:
+                pass
+
     def _criar_pagina(self, chave: str):
         page_cls = self.routes.get(chave)
         if page_cls is None:
@@ -123,19 +145,17 @@ class Navigation(ctk.CTkFrame):
 
         kwargs = {}
 
-        # ✅ injeta sistema se a página aceitar
         if self._pagina_aceita_param(page_cls, "sistema"):
             kwargs["sistema"] = self.sistema
 
-        # ✅ injeta usuário logado se a página aceitar
         if self._pagina_aceita_param(page_cls, "usuario_logado"):
             kwargs["usuario_logado"] = self.usuario_logado
-
-        # Se a página aceitar algo tipo "usuario" também, tenta (compatibilidade)
         elif self._pagina_aceita_param(page_cls, "usuario"):
             kwargs["usuario"] = self.usuario_logado
 
-        return page_cls(self, **kwargs)
+        pagina = page_cls(self, **kwargs)
+        self._injetar_dependencias_pos_instanciacao(pagina)
+        return pagina
 
     # ======================================================
     # UI HELPERS
@@ -153,18 +173,23 @@ class Navigation(ctk.CTkFrame):
     # NAVEGAÇÃO
     # ======================================================
     def show(self, chave: str):
-        # trava extra (segurança)
         if (chave in self.ROTAS_ADMIN) and (not self._is_admin()):
             self._mostrar_acesso_negado()
-            return  # mantém a página atual
+            return
 
         if self.pagina_atual is not None:
             self.pagina_atual.destroy()
             self.pagina_atual = None
 
-        self.chave_atual = chave
-        self.pagina_atual = self._criar_pagina(chave)
-        self.pagina_atual.grid(row=0, column=0, sticky="nsew")
+        try:
+            self.chave_atual = chave
+            self.pagina_atual = self._criar_pagina(chave)
+            self.pagina_atual.grid(row=0, column=0, sticky="nsew")
+        except Exception as e:
+            print(f"[Navigation] Erro ao abrir rota '{chave}': {e}")
+            self.chave_atual = chave
+            self.pagina_atual = PlaceholderPage(self, chave=chave)
+            self.pagina_atual.grid(row=0, column=0, sticky="nsew")
 
     def refresh(self):
         if self.chave_atual:

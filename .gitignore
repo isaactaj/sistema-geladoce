@@ -166,3 +166,29 @@ desktop.ini
 *.ico
 app/core/__pycache__/navigation.cpython-311.pyc
 app/core/__pycache__/navigation.cpython-311.pyc
+
+# Ambiente virtual
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Arquivos locais / temporários
+.env
+*.log
+
+# Exports e backups pesados
+exports/*.sql
+*.bak
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db

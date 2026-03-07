@@ -1,45 +1,20 @@
+CREATE DATABASE IF NOT EXISTS geladoce
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_unicode_ci;
+
+USE geladoce;
+
 -- app/database/schema.sql
 -- ============================================================
--- SCHEMA GELADOCE (COMPATÍVEL COM O CÓDIGO ATUAL)
 -- MySQL 8.x / InnoDB / utf8mb4
 -- ============================================================
 
 SET NAMES utf8mb4;
-SET FOREIGN_KEY_CHECKS = 0;
-
-DROP VIEW IF EXISTS vw_fechamentos_resumo;
-
-DROP TABLE IF EXISTS delivery_itens;
-DROP TABLE IF EXISTS delivery_pedidos;
-
-DROP TABLE IF EXISTS mov_fidelidade;
-
-DROP TABLE IF EXISTS vendas_itens;
-DROP TABLE IF EXISTS vendas;
-
-DROP TABLE IF EXISTS fechamentos;
-
-DROP TABLE IF EXISTS estoque;
-DROP TABLE IF EXISTS produtos;
-
-DROP TABLE IF EXISTS agendamentos;
-
-DROP TABLE IF EXISTS carrinhos;
-
-DROP TABLE IF EXISTS usuarios;
-DROP TABLE IF EXISTS funcionarios;
-
-DROP TABLE IF EXISTS fornecedores;
-DROP TABLE IF EXISTS clientes;
-
-DROP TABLE IF EXISTS formas_pagamento;
-
-SET FOREIGN_KEY_CHECKS = 1;
 
 -- ============================================================
 -- 1) CLIENTES
 -- ============================================================
-CREATE TABLE clientes (
+CREATE TABLE IF NOT EXISTS clientes (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     cpf_cnpj VARCHAR(20) NOT NULL,
@@ -66,7 +41,7 @@ CREATE TABLE clientes (
 -- ============================================================
 -- 2) FORNECEDORES
 -- ============================================================
-CREATE TABLE fornecedores (
+CREATE TABLE IF NOT EXISTS fornecedores (
     id INT AUTO_INCREMENT PRIMARY KEY,
     razao VARCHAR(180) NOT NULL,
     cnpj VARCHAR(14) NOT NULL,
@@ -83,7 +58,7 @@ CREATE TABLE fornecedores (
 -- ============================================================
 -- 3) FUNCIONÁRIOS
 -- ============================================================
-CREATE TABLE funcionarios (
+CREATE TABLE IF NOT EXISTS funcionarios (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     cpf VARCHAR(11) NOT NULL,
@@ -103,7 +78,7 @@ CREATE TABLE funcionarios (
 -- ============================================================
 -- 4) USUÁRIOS (LOGIN)
 -- ============================================================
-CREATE TABLE usuarios (
+CREATE TABLE IF NOT EXISTS usuarios (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     login VARCHAR(60) NOT NULL,
@@ -126,7 +101,7 @@ CREATE TABLE usuarios (
 -- ============================================================
 -- 5) CARRINHOS
 -- ============================================================
-CREATE TABLE carrinhos (
+CREATE TABLE IF NOT EXISTS carrinhos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     id_externo VARCHAR(30) NOT NULL,
     nome VARCHAR(120) NOT NULL,
@@ -143,11 +118,8 @@ CREATE TABLE carrinhos (
 
 -- ============================================================
 -- 6) PRODUTOS
--- tipo_item + eh_insumo são os campos que separam:
---   - Produto: aparece em catálogo/produtos/vendas
---   - Insumo: aparece apenas no estoque
 -- ============================================================
-CREATE TABLE produtos (
+CREATE TABLE IF NOT EXISTS produtos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     categoria ENUM('Sorvete', 'Picolé', 'Açaí', 'Outros') NOT NULL DEFAULT 'Outros',
@@ -174,7 +146,7 @@ CREATE TABLE produtos (
 -- ============================================================
 -- 7) ESTOQUE
 -- ============================================================
-CREATE TABLE estoque (
+CREATE TABLE IF NOT EXISTS estoque (
     produto_id INT PRIMARY KEY,
     quantidade INT NOT NULL DEFAULT 0,
 
@@ -187,23 +159,26 @@ CREATE TABLE estoque (
 -- ============================================================
 -- 8) FORMAS DE PAGAMENTO
 -- ============================================================
-CREATE TABLE formas_pagamento (
+CREATE TABLE IF NOT EXISTS formas_pagamento (
     codigo VARCHAR(30) PRIMARY KEY,
     descricao VARCHAR(80) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO formas_pagamento (codigo, descricao) VALUES
+INSERT INTO formas_pagamento (codigo, descricao)
+VALUES
 ('Dinheiro', 'Pagamento em dinheiro'),
 ('Pix', 'Pagamento via PIX'),
 ('Cartão', 'Pagamento via cartão (com acento)'),
 ('Cartao', 'Pagamento via cartão (sem acento)'),
 ('Prazo', 'Pagamento a prazo')
-ON DUPLICATE KEY UPDATE descricao = VALUES(descricao);
+AS nova
+ON DUPLICATE KEY UPDATE
+    descricao = nova.descricao;
 
 -- ============================================================
 -- 9) FECHAMENTOS
 -- ============================================================
-CREATE TABLE fechamentos (
+CREATE TABLE IF NOT EXISTS fechamentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     data DATE NOT NULL,
 
@@ -230,7 +205,7 @@ CREATE TABLE fechamentos (
 -- ============================================================
 -- 10) VENDAS
 -- ============================================================
-CREATE TABLE vendas (
+CREATE TABLE IF NOT EXISTS vendas (
     id INT AUTO_INCREMENT PRIMARY KEY,
     tipo ENUM('BALCAO', 'REVENDA', 'DELIVERY') NOT NULL,
     status ENUM('ABERTA', 'FINALIZADA', 'CANCELADA') NOT NULL DEFAULT 'FINALIZADA',
@@ -280,7 +255,7 @@ CREATE TABLE vendas (
 -- ============================================================
 -- 11) ITENS DA VENDA
 -- ============================================================
-CREATE TABLE vendas_itens (
+CREATE TABLE IF NOT EXISTS vendas_itens (
     id INT AUTO_INCREMENT PRIMARY KEY,
     venda_id INT NOT NULL,
     produto_id INT NOT NULL,
@@ -306,7 +281,7 @@ CREATE TABLE vendas_itens (
 -- ============================================================
 -- 12) MOVIMENTAÇÕES DE FIDELIDADE
 -- ============================================================
-CREATE TABLE mov_fidelidade (
+CREATE TABLE IF NOT EXISTS mov_fidelidade (
     id INT AUTO_INCREMENT PRIMARY KEY,
     cliente_id INT NOT NULL,
     acao ENUM('ADICIONAR', 'REMOVER', 'RESGATAR', 'BONUS', 'ZERAR') NOT NULL,
@@ -340,7 +315,7 @@ CREATE TABLE mov_fidelidade (
 -- ============================================================
 -- 13) AGENDAMENTOS
 -- ============================================================
-CREATE TABLE agendamentos (
+CREATE TABLE IF NOT EXISTS agendamentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     data DATE NOT NULL,
     inicio VARCHAR(5) NOT NULL,
@@ -373,7 +348,7 @@ CREATE TABLE agendamentos (
 -- ============================================================
 -- 14) DELIVERY
 -- ============================================================
-CREATE TABLE delivery_pedidos (
+CREATE TABLE IF NOT EXISTS delivery_pedidos (
     id INT AUTO_INCREMENT PRIMARY KEY,
 
     data DATE NOT NULL,
@@ -432,7 +407,7 @@ CREATE TABLE delivery_pedidos (
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE delivery_itens (
+CREATE TABLE IF NOT EXISTS delivery_itens (
     id INT AUTO_INCREMENT PRIMARY KEY,
     pedido_id INT NOT NULL,
     produto_id INT NOT NULL,

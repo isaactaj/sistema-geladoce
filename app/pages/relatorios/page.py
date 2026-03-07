@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import datetime as dt
+import traceback
 from pathlib import Path
 import textwrap
 
@@ -67,7 +68,6 @@ class CardGraficoResponsivo(ctk.CTkFrame):
     def _estilizar_eixos_base(self, ax):
         ax.set_facecolor("#FFFFFF")
 
-        # bordas
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.spines["left"].set_color(COR_EIXO)
@@ -75,19 +75,15 @@ class CardGraficoResponsivo(ctk.CTkFrame):
         ax.spines["left"].set_linewidth(1.0)
         ax.spines["bottom"].set_linewidth(1.0)
 
-        # ticks
         ax.tick_params(axis="x", colors=COR_TEXTO_SEC, labelsize=9, length=0, pad=6)
         ax.tick_params(axis="y", colors=COR_TEXTO_SEC, labelsize=9, length=0, pad=6)
 
-        # grid padrão: só no eixo Y para reduzir ruído
         ax.grid(axis="y", linestyle="--", linewidth=0.8, alpha=0.18, color=COR_GRID)
         ax.grid(axis="x", visible=False)
 
-        # margens internas melhores
         ax.margins(x=0.03)
 
     def _ao_redimensionar(self, event):
-        # Evita redraw excessivo quando a largura praticamente não mudou
         if abs(event.width - self._ultimo_w) < 6:
             return
 
@@ -119,8 +115,53 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
     def __init__(self, master, sistema=None):
         super().__init__(master, fg_color=COR_FUNDO)
 
-        self.sistema = sistema
-        self._dados_dashboard = {
+        self.sistema = sistema or self._resolver_sistema(master)
+
+        self._dados_dashboard = self._dados_vazios()
+
+        self.diretorio_exports_relatorios = Path(__file__).resolve().parents[3] / "exports" / "relatorios"
+        self.diretorio_exports_relatorios.mkdir(parents=True, exist_ok=True)
+
+        self.grid_columnconfigure((0, 1), weight=1)
+        self.grid_rowconfigure(5, weight=1)
+        self.grid_rowconfigure(6, weight=0, minsize=100)
+
+        self.mes, self.ano = self._periodo_inicial_dashboard()
+
+        ctk.CTkLabel(
+            self, text="Administrativo • Relatórios",
+            font=ctk.CTkFont(family=FONTE, size=24, weight="bold"),
+            text_color=COR_TEXTO
+        ).grid(row=0, column=0, columnspan=2, padx=30, pady=(14, 4), sticky="w")
+
+        self.lbl_subtitulo = ctk.CTkLabel(
+            self,
+            text="Dashboard com vendas concluídas, faturamento líquido, ticket médio e ranking de produtos.",
+            font=ctk.CTkFont(family=FONTE, size=13),
+            text_color=COR_TEXTO_SEC
+        )
+        self.lbl_subtitulo.grid(row=1, column=0, columnspan=2, padx=30, pady=(0, 4), sticky="w")
+
+        self.lbl_contexto = ctk.CTkLabel(
+            self,
+            text="",
+            font=ctk.CTkFont(family=FONTE, size=12),
+            text_color=COR_TEXTO_SEC
+        )
+        self.lbl_contexto.grid(row=2, column=0, columnspan=2, padx=30, pady=(0, 8), sticky="w")
+
+        self._criar_filtros()
+        self._criar_cards_kpi()
+        self._criar_area_graficos()
+        self._criar_frame_exportacao()
+
+        self.atualizar_dashboard()
+
+    # -------------------------
+    # Estado padrão
+    # -------------------------
+    def _dados_vazios(self):
+        return {
             "faturamento": 0.0,
             "qtd_vendas": 0,
             "ticket_medio": 0.0,
@@ -128,51 +169,41 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
             "top_produtos": [],
             "vendas": [],
             "taxas_entrega": 0.0,
+            "qtd_produtos_distintos": 0,
+            "ultima_venda": None,
+            "possui_dados": False,
         }
 
-        # Caminho fixo para exportações:
-        # geladocesistema/exports/relatorios
-        self.diretorio_exports_relatorios = Path(__file__).resolve().parents[3] / "exports" / "relatorios"
-        self.diretorio_exports_relatorios.mkdir(parents=True, exist_ok=True)
+    def _resolver_sistema(self, widget):
+        atual = widget
+        while atual is not None:
+            sistema = getattr(atual, "sistema", None)
+            if sistema is not None:
+                return sistema
+            atual = getattr(atual, "master", None)
+        return None
 
-        # Grid base da página
-        self.grid_columnconfigure((0, 1), weight=1)
-        self.grid_rowconfigure(4, weight=1)                 # área dos gráficos
-        self.grid_rowconfigure(5, weight=0, minsize=100)    # respiro + botões export
-
-        # Estado (mês/ano)
+    def _periodo_inicial_dashboard(self):
         hoje = dt.date.today()
-        self.mes = hoje.month
-        self.ano = hoje.year
 
-        # Título
-        ctk.CTkLabel(
-            self, text="Administrativo • Relatórios",
-            font=ctk.CTkFont(family=FONTE, size=24, weight="bold"),
-            text_color=COR_TEXTO
-        ).grid(row=0, column=0, columnspan=2, padx=30, pady=(14, 4), sticky="w")
+        if self.sistema is None:
+            return hoje.month, hoje.year
 
-        ctk.CTkLabel(
-            self, text="Visão geral.",
-            font=ctk.CTkFont(family=FONTE, size=13),
-            text_color=COR_TEXTO_SEC
-        ).grid(row=1, column=0, columnspan=2, padx=30, pady=(0, 8), sticky="w")
+        try:
+            if hasattr(self.sistema, "obter_periodo_relatorio_inicial"):
+                mes, ano = self.sistema.obter_periodo_relatorio_inicial()
+                return int(mes), int(ano)
+        except Exception as e:
+            print(f"[Relatórios] Falha ao descobrir período inicial: {e}")
 
-        # UI
-        self._criar_filtros()
-        self._criar_cards_kpi()
-        self._criar_area_graficos()
-        self._criar_frame_exportacao()
-
-        # Primeira renderização
-        self.atualizar_dashboard()
+        return hoje.month, hoje.year
 
     # -------------------------
     # UI: filtros
     # -------------------------
     def _criar_filtros(self):
         self.frame_filtros = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_filtros.grid(row=2, column=0, columnspan=2, padx=30, pady=(0, 10), sticky="ew")
+        self.frame_filtros.grid(row=3, column=0, columnspan=2, padx=30, pady=(0, 10), sticky="ew")
         self.frame_filtros.grid_columnconfigure(0, weight=1)
         self.frame_filtros.grid_columnconfigure(1, weight=0)
 
@@ -187,7 +218,7 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
 
         self.combo_tipo = ctk.CTkComboBox(
             filtros_esq,
-            values=["Todos", "Balcão", "Revenda", "Serviços"],
+            values=["Todos", "Balcão", "Revenda", "Delivery"],
             width=140,
             command=lambda _: self.atualizar_dashboard()
         )
@@ -252,8 +283,8 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
     # -------------------------
     def _criar_cards_kpi(self):
         self.container_cards = ctk.CTkFrame(self, fg_color="transparent")
-        self.container_cards.grid(row=3, column=0, columnspan=2, padx=30, pady=(0, 12), sticky="ew")
-        self.container_cards.grid_columnconfigure((0, 1, 2), weight=1)
+        self.container_cards.grid(row=4, column=0, columnspan=2, padx=30, pady=(0, 12), sticky="ew")
+        self.container_cards.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.kpis = {}
 
@@ -294,16 +325,17 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
 
             return (lbl_v, lbl_delta, lbl_sub)
 
-        self.kpis["faturamento"] = criar_kpi(0, "Faturamento")
-        self.kpis["vendas"] = criar_kpi(1, "Vendas")
+        self.kpis["faturamento"] = criar_kpi(0, "Faturamento Líquido")
+        self.kpis["vendas"] = criar_kpi(1, "Vendas Concluídas")
         self.kpis["ticket"] = criar_kpi(2, "Ticket Médio")
+        self.kpis["produtos"] = criar_kpi(3, "Produtos Distintos")
 
     # -------------------------
     # UI: gráficos
     # -------------------------
     def _criar_area_graficos(self):
         self.frame_graficos = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_graficos.grid(row=4, column=0, columnspan=2, padx=30, pady=(0, 20), sticky="nsew")
+        self.frame_graficos.grid(row=5, column=0, columnspan=2, padx=30, pady=(0, 20), sticky="nsew")
         self.frame_graficos.grid_columnconfigure((0, 1), weight=1)
         self.frame_graficos.grid_rowconfigure(0, weight=1)
 
@@ -318,7 +350,7 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
     # -------------------------
     def _criar_frame_exportacao(self):
         frame_export = ctk.CTkFrame(self, fg_color="transparent")
-        frame_export.grid(row=5, column=0, columnspan=2, padx=30, pady=(12, 20), sticky="ew")
+        frame_export.grid(row=6, column=0, columnspan=2, padx=30, pady=(12, 20), sticky="ew")
         frame_export.grid_columnconfigure(0, weight=1)
 
         botoes = ctk.CTkFrame(frame_export, fg_color="transparent")
@@ -433,6 +465,18 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
                 valores.append(0.0)
         return dias, valores
 
+    def _formatar_data_contexto(self, valor):
+        if valor is None:
+            return "—"
+        if isinstance(valor, dt.datetime):
+            return valor.strftime("%d/%m/%Y %H:%M")
+        if isinstance(valor, dt.date):
+            return valor.strftime("%d/%m/%Y")
+        try:
+            return str(valor)
+        except Exception:
+            return "—"
+
     # -------------------------
     # Estado da tela
     # -------------------------
@@ -454,47 +498,76 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
         nomes_meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
         self.lbl_periodo.configure(text=f"{nomes_meses[self.mes - 1]}/{self.ano}")
 
+        tipo = self.combo_tipo.get()
+        categoria = self.combo_categoria.get()
+
         try:
+            if self.sistema is None:
+                raise RuntimeError("SistemaService não foi injetado na página de relatórios.")
+
             dados = self.sistema.dados_relatorio(
                 mes=self.mes,
                 ano=self.ano,
-                tipo=self.combo_tipo.get(),
-                categoria=self.combo_categoria.get(),
+                tipo=tipo,
+                categoria=categoria,
             )
-        except Exception:
-            dados = {
-                "faturamento": 0,
-                "qtd_vendas": 0,
-                "ticket_medio": 0,
-                "serie_por_dia": {},
-                "top_produtos": [],
-                "vendas": [],
-                "taxas_entrega": 0,
-            }
+
+        except Exception as e:
+            print("\n[RELATÓRIOS] Erro ao atualizar dashboard")
+            print(f"Período: {self.mes:02d}/{self.ano} | tipo={tipo} | categoria={categoria}")
+            print(f"Erro: {e}")
+            traceback.print_exc()
+            dados = self._dados_vazios()
 
         self._dados_dashboard = dados
 
         faturamento = float(dados.get("faturamento", 0))
-        vendas = int(dados.get("qtd_vendas", 0))
+        qtd_vendas = int(dados.get("qtd_vendas", 0))
         ticket = float(dados.get("ticket_medio", 0))
+        qtd_produtos_distintos = int(dados.get("qtd_produtos_distintos", 0))
+        taxas_entrega = float(dados.get("taxas_entrega", 0))
+        ultima_venda = dados.get("ultima_venda")
+        possui_dados = bool(dados.get("possui_dados"))
+
+        if possui_dados:
+            texto_contexto = (
+                f"{qtd_vendas} venda(s) concluída(s) • "
+                f"{qtd_produtos_distintos} produto(s) distinto(s) • "
+                f"Última venda em {self._formatar_data_contexto(ultima_venda)}"
+            )
+            if taxas_entrega > 0:
+                texto_contexto += f" • Taxas de delivery: {self._fmt_dinheiro(taxas_entrega)}"
+        else:
+            texto_contexto = (
+                f"Sem dados para {nomes_meses[self.mes - 1]}/{self.ano} "
+                f"com os filtros atuais."
+            )
+
+        self.lbl_contexto.configure(text=texto_contexto)
 
         # KPI: Faturamento
         lbl_v, lbl_d, lbl_s = self.kpis["faturamento"]
         lbl_v.configure(text=self._fmt_dinheiro(faturamento))
         lbl_d.configure(text="")
-        lbl_s.configure(text="Valor real do período")
+        lbl_s.configure(text="Receita líquida de vendas concluídas")
 
         # KPI: Vendas
         lbl_v, lbl_d, lbl_s = self.kpis["vendas"]
-        lbl_v.configure(text=str(vendas))
+        lbl_v.configure(text=str(qtd_vendas))
         lbl_d.configure(text="")
-        lbl_s.configure(text="Quantidade real de vendas")
+        lbl_s.configure(text="Quantidade de vendas concluídas")
 
         # KPI: Ticket médio
         lbl_v, lbl_d, lbl_s = self.kpis["ticket"]
         lbl_v.configure(text=self._fmt_dinheiro(ticket))
         lbl_d.configure(text="")
-        lbl_s.configure(text="Faturamento ÷ Vendas")
+        lbl_s.configure(text="Faturamento ÷ vendas concluídas")
+
+        # KPI: Produtos distintos
+        lbl_v, lbl_d, lbl_s = self.kpis["produtos"]
+        lbl_v.configure(text=str(qtd_produtos_distintos))
+        lbl_d.configure(text="")
+        lbl_s.configure(text="Produtos que apareceram nas vendas do período")
 
         # --------- Gráfico 1: faturamento por dia
         serie = dados.get("serie_por_dia", {}) or {}
@@ -508,7 +581,6 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
                 x_pos = list(range(len(dias)))
                 labels_dias = [str(d) for d in dias]
 
-                # linha principal
                 ax.plot(
                     x_pos, valores,
                     linewidth=2.4,
@@ -519,7 +591,6 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
                     zorder=3
                 )
 
-                # preenchimento suave
                 ax.fill_between(
                     x_pos, valores, 0,
                     color=COR_GRAFICO_SUAVE,
@@ -527,7 +598,6 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
                     zorder=1
                 )
 
-                # linha de média
                 media = sum(valores) / len(valores) if valores else 0
                 ax.axhline(
                     media,
@@ -538,7 +608,6 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
                     zorder=2
                 )
 
-                # controle de densidade do eixo X
                 if len(labels_dias) <= 8:
                     ticks = x_pos
                 else:
@@ -550,12 +619,10 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
                 ax.set_xticks(ticks)
                 ax.set_xticklabels([labels_dias[i] for i in ticks])
 
-                # limites e respiro
                 maior = max(valores) if valores else 0
                 topo = maior * 1.22 if maior > 0 else 1
                 ax.set_ylim(bottom=0, top=topo)
 
-                # marcação dos valores
                 if len(valores) <= 8:
                     for x, y in zip(x_pos, valores):
                         ax.annotate(
@@ -591,8 +658,8 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
             else:
                 self._desenhar_estado_vazio(
                     ax,
-                    "Sem vendas no período",
-                    "Altere o mês, ano ou os filtros para visualizar o histórico."
+                    "Sem faturamento no período",
+                    "Não há vendas concluídas suficientes para montar a série diária."
                 )
                 ax.set_ylabel("Faturamento", color=COR_TEXTO_SEC, fontsize=10)
 
@@ -623,7 +690,6 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
                     ax.set_xlabel("Quantidade vendida", color=COR_TEXTO_SEC, fontsize=10)
                     return
 
-                # Ordena do maior para o menor e limita visualmente aos 8 primeiros
                 pares.sort(key=lambda x: x[1], reverse=True)
                 pares = pares[:8]
 
@@ -664,8 +730,8 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
             else:
                 self._desenhar_estado_vazio(
                     ax,
-                    "Sem produtos vendidos",
-                    "Ainda não há itens suficientes para montar o ranking."
+                    "Sem ranking de produtos",
+                    "Ainda não há itens suficientes para montar o top produtos."
                 )
                 ax.set_xlabel("Quantidade vendida", color=COR_TEXTO_SEC, fontsize=10)
 

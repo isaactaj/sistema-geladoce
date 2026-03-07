@@ -1,4 +1,3 @@
-# app/database/connection.py
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,33 +14,23 @@ from app.database.config import DB_NAME, get_db_config
 
 _DEFAULT_CHARSET = "utf8mb4"
 _DEFAULT_COLLATION = "utf8mb4_unicode_ci"
-_DEFAULT_TIMEOUT = 8  # segundos (bom para desktop; evita travar a UI)
+_DEFAULT_TIMEOUT = 8  # segundos
 
 
 def _connect(include_database: bool):
     """
-    Conecta no MySQL com parâmetros mais seguros para apps desktop:
-    - charset/collation garantidos (evita bugs com acentos)
-    - timeout curto (evita UI travada quando MySQL não responde)
-    - autocommit sempre False (transações explícitas)
+    Conecta no MySQL com parâmetros mais seguros para app desktop.
     """
     cfg = get_db_config(include_database=include_database)
 
-    # Garantias extras (mesmo que config.py já tenha autocommit=False)
     cfg.setdefault("autocommit", False)
-
-    # Evita travar a UI em caso de MySQL offline/sem resposta
     cfg.setdefault("connection_timeout", _DEFAULT_TIMEOUT)
-
-    # Charset/collation consistentes (acentos: Cartão, Açaí, Picolé)
-    # mysql-connector-python aceita charset/collation
     cfg.setdefault("charset", _DEFAULT_CHARSET)
     cfg.setdefault("collation", _DEFAULT_COLLATION)
     cfg.setdefault("use_unicode", True)
 
     conn = mysql.connector.connect(**cfg)
 
-    # Reforço: autocommit off
     try:
         conn.autocommit = False
     except Exception:
@@ -53,12 +42,14 @@ def _connect(include_database: bool):
 def conectar_sem_banco():
     """
     Abre conexão sem selecionar database.
-    Útil para criar o banco pela primeira vez.
+    Útil para criação manual do banco.
     """
     try:
         return _connect(include_database=False)
     except Error as e:
-        raise ConnectionError(f"Erro ao conectar ao MySQL sem banco selecionado: {e}") from e
+        raise ConnectionError(
+            f"Erro ao conectar ao MySQL sem banco selecionado: {e}"
+        ) from e
 
 
 def conectar():
@@ -68,12 +59,15 @@ def conectar():
     try:
         return _connect(include_database=True)
     except Error as e:
-        raise ConnectionError(f"Erro ao conectar ao banco '{DB_NAME}': {e}") from e
+        raise ConnectionError(
+            f"Erro ao conectar ao banco '{DB_NAME}': {e}"
+        ) from e
 
 
 def criar_banco_se_nao_existir():
     """
-    Garante que o banco exista antes de usar o sistema.
+    Garante que o banco exista.
+    Esta função é segura: cria o banco apenas se ele não existir.
     """
     conn = None
     cursor = None
@@ -89,7 +83,9 @@ def criar_banco_se_nao_existir():
         )
         conn.commit()
     except Error as e:
-        raise RuntimeError(f"Erro ao criar o banco '{DB_NAME}': {e}") from e
+        raise RuntimeError(
+            f"Erro ao criar o banco '{DB_NAME}': {e}"
+        ) from e
     finally:
         try:
             if cursor is not None:
@@ -100,7 +96,7 @@ def criar_banco_se_nao_existir():
 
 
 # ============================================================
-# SCHEMA (TABELAS + ÍNDICES + MIGRAÇÕES)
+# SCHEMA SQL
 # ============================================================
 
 def _strip_comments(sql: str) -> str:
@@ -124,7 +120,6 @@ def _strip_comments(sql: str) -> str:
         ch = sql[i]
         nxt = sql[i + 1] if i + 1 < n else ""
 
-        # bloco /* ... */
         if in_block_comment:
             if ch == "*" and nxt == "/":
                 in_block_comment = False
@@ -133,13 +128,11 @@ def _strip_comments(sql: str) -> str:
             i += 1
             continue
 
-        # início de bloco /* ... */
         if not in_squote and not in_dquote and not in_btick and ch == "/" and nxt == "*":
             in_block_comment = True
             i += 2
             continue
 
-        # comentários de linha: -- ... ou # ...
         if not in_squote and not in_dquote and not in_btick:
             if ch == "-" and nxt == "-":
                 while i < n and sql[i] not in ("\n", "\r"):
@@ -150,7 +143,6 @@ def _strip_comments(sql: str) -> str:
                     i += 1
                 continue
 
-        # alterna estados de string
         if ch == "'" and not in_dquote and not in_btick:
             if i > 0 and sql[i - 1] == "\\":
                 out.append(ch)
@@ -185,7 +177,7 @@ def _strip_comments(sql: str) -> str:
 
 def _split_statements(sql: str) -> List[str]:
     """
-    Divide o SQL em statements por ';' ignorando ';' dentro de strings/crases.
+    Divide o SQL em statements por ';', ignorando ';' dentro de strings/crases.
     """
     if "delimiter" in sql.lower():
         raise RuntimeError(
@@ -250,10 +242,6 @@ def _split_statements(sql: str) -> List[str]:
 
 
 def _ler_comandos_sql(schema_path: Path) -> List[str]:
-    """
-    Lê schema.sql e retorna statements prontos para execução.
-    Mais robusto do que split(';') simples.
-    """
     conteudo = schema_path.read_text(encoding="utf-8")
     sem_comentarios = _strip_comments(conteudo)
     comandos = _split_statements(sem_comentarios)
@@ -270,7 +258,6 @@ def _eh_alter_add_column(comando: str) -> bool:
     return c.startswith("alter table") and " add column " in c
 
 
-# ✅ novos helpers (idempotência extra)
 def _eh_drop_fk(comando: str) -> bool:
     c = " ".join(comando.strip().lower().split())
     return c.startswith("alter table") and " drop foreign key " in c
@@ -288,11 +275,7 @@ def _eh_add_fk(comando: str) -> bool:
 
 def _executar_comando(cursor, comando: str):
     """
-    Executa um comando SQL com tolerância idempotente:
-      - ignora 1061 para CREATE INDEX (índice já existe)
-      - ignora 1060 para ALTER TABLE ... ADD COLUMN (coluna já existe)
-      - ignora 1091 para DROP FK/INDEX que não existe
-      - ignora 1826/1831 para ADD CONSTRAINT FK com nome já existente
+    Executa um comando SQL com tolerância idempotente.
     """
     try:
         cursor.execute(comando)
@@ -318,7 +301,12 @@ def _executar_comando(cursor, comando: str):
 
 def criar_tabelas_se_nao_existirem():
     """
-    Executa o schema.sql para criar tabelas/índices/views e aplicar seeds/migrações.
+    ATENÇÃO:
+    Esta função executa o schema.sql completo.
+
+    Se o schema.sql tiver DROP TABLE / DROP VIEW, a operação será destrutiva.
+    Portanto, use esta função APENAS manualmente quando quiser recriar a base.
+    Não chame isso no startup do sistema.
     """
     conn = None
     cursor = None
@@ -358,20 +346,19 @@ def criar_tabelas_se_nao_existirem():
                 conn.close()
 
 
-# ============================================================
-# TESTE DE CONEXÃO
-# ============================================================
-
 def testar_conexao() -> bool:
+    """
+    Testa se o app consegue abrir conexão com o banco configurado.
+    """
     conn = None
     cursor = None
     try:
         conn = conectar()
         cursor = conn.cursor()
-        cursor.execute("SELECT 1")
+        cursor.execute("SELECT DATABASE(), 1")
         cursor.fetchone()
         return True
-    except Error:
+    except Exception:
         return False
     finally:
         try:

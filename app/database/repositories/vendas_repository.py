@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import datetime, date, time
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -9,57 +9,111 @@ from app.database.connection import conectar
 
 class VendasRepository:
     """
-    Regras:
-      - Tudo em UMA transação
-      - Estoque com SELECT ... FOR UPDATE
-      - Não vende produto inativo
-      - Por padrão, não vende insumo
-      - cancelar_venda(): devolve estoque e marca CANCELADA
+    Repositório de vendas do Geladoce.
+
+    Compatível com:
+    - SistemaService.registrar_venda(...)
+    - SistemaService.listar_vendas(...)
+    - SistemaService.resumo_fechamento(...)
+    - Dashboard de relatórios
     """
 
+    # ======================================================
+    # HELPERS
+    # ======================================================
     def _to_decimal(self, valor: Any) -> Decimal:
         if isinstance(valor, Decimal):
             return valor
-        txt = str(valor).strip().replace("R$", "").replace(" ", "")
-        if not txt:
-            return Decimal("0")
-        if "," in txt and "." in txt:
-            txt = txt.replace(".", "").replace(",", ".")
-        else:
-            txt = txt.replace(",", ".")
         try:
+            txt = str(valor).strip().replace("R$", "").replace(" ", "")
+            if not txt:
+                return Decimal("0")
+            if "," in txt and "." in txt:
+                txt = txt.replace(".", "").replace(",", ".")
+            else:
+                txt = txt.replace(",", ".")
             return Decimal(txt)
         except Exception:
             return Decimal("0")
 
-    def _listar_codigos_pagamento(self, cur) -> set:
-        cur.execute("SELECT codigo FROM formas_pagamento")
+    def _normalizar_datetime(self, valor: Any) -> datetime:
+        if isinstance(valor, datetime):
+            return valor
+        if isinstance(valor, date):
+            return datetime.combine(valor, time.min)
+
+        txt = str(valor).strip()
+        formatos = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d",
+            "%d/%m/%Y %H:%M",
+            "%d/%m/%Y",
+        ]
+        for fmt in formatos:
+            try:
+                return datetime.strptime(txt, fmt)
+            except Exception:
+                pass
+        return datetime.now()
+
+    def _buscar_produto(self, cur, produto_id: int) -> Optional[Dict[str, Any]]:
+        sql = """
+            SELECT
+                p.id,
+                p.nome,
+                p.categoria,
+                p.preco,
+                p.ativo,
+                p.tipo_item,
+                p.eh_insumo,
+                COALESCE(e.quantidade, 0) AS estoque_atual
+            FROM produtos p
+            LEFT JOIN estoque e
+                ON e.produto_id = p.id
+            WHERE p.id = %s
+        """
+        cur.execute(sql, (int(produto_id),))
+        return cur.fetchone()
+
+    def _listar_itens_da_venda(self, cur, venda_id: int) -> List[Dict[str, Any]]:
+        sql = """
+            SELECT
+                vi.id,
+                vi.venda_id,
+                vi.produto_id,
+                p.nome AS produto_nome,
+                p.categoria AS categoria,
+                vi.qtd,
+                vi.unitario,
+                vi.total
+            FROM vendas_itens vi
+            INNER JOIN produtos p
+                ON p.id = vi.produto_id
+            WHERE vi.venda_id = %s
+            ORDER BY vi.id
+        """
+        cur.execute(sql, (int(venda_id),))
         rows = cur.fetchall() or []
-        return {r[0] for r in rows}
 
-    def _normalizar_forma_pagamento(self, forma: str, codigos_existentes: Optional[set] = None) -> str:
-        f = str(forma or "").strip()
-        if not f:
-            raise ValueError("Forma de pagamento é obrigatória.")
+        itens = []
+        for r in rows:
+            itens.append({
+                "id": r["id"],
+                "venda_id": r["venda_id"],
+                "produto_id": r["produto_id"],
+                "produto_nome": r["produto_nome"],
+                "nome": r["produto_nome"],
+                "categoria": r["categoria"],
+                "qtd": int(r["qtd"] or 0),
+                "unitario": self._to_decimal(r["unitario"]),
+                "total": self._to_decimal(r["total"]),
+            })
+        return itens
 
-        equivalencias = {"cartao": "Cartao", "cartão": "Cartão"}
-        low = f.lower()
-        if low in equivalencias:
-            prefer = equivalencias[low]
-            if codigos_existentes and prefer in codigos_existentes:
-                return prefer
-
-        if codigos_existentes and f in codigos_existentes:
-            return f
-
-        if codigos_existentes:
-            if f.lower() == "cartao" and "Cartao" in codigos_existentes:
-                return "Cartao"
-            if f.lower() == "cartão" and "Cartão" in codigos_existentes:
-                return "Cartão"
-
-        raise ValueError("Forma de pagamento inválida (não cadastrada em formas_pagamento).")
-
+    # ======================================================
+    # REGISTRAR VENDA
+    # ======================================================
     def registrar_venda(
         self,
         tipo: str,
@@ -67,168 +121,163 @@ class VendasRepository:
         forma_pagamento: str,
         cliente_id: Optional[int] = None,
         revendedor_id: Optional[int] = None,
-        desconto: Decimal = Decimal("0"),
-        taxa_entrega: Decimal = Decimal("0"),
+        desconto: Any = 0,
+        taxa_entrega: Any = 0,
         observacao: str = "",
-        data_venda: Optional[datetime] = None,
+        data_venda: Optional[Any] = None,
         status: str = "FINALIZADA",
-        fechamento_id: Optional[int] = None,
-        permitir_insumos: bool = False,
     ) -> Dict[str, Any]:
-        tipo = str(tipo or "").strip().upper()
-        if tipo not in ("BALCAO", "REVENDA", "DELIVERY"):
-            raise ValueError("Tipo de venda inválido.")
-
-        status = str(status or "FINALIZADA").strip().upper()
-        if status not in ("ABERTA", "FINALIZADA", "CANCELADA"):
-            raise ValueError("Status inválido.")
-
-        data_ref = data_venda if isinstance(data_venda, datetime) else datetime.now()
-        desconto = self._to_decimal(desconto)
-        taxa_entrega = self._to_decimal(taxa_entrega)
-        if desconto < 0:
-            desconto = Decimal("0")
-        if taxa_entrega < 0:
-            taxa_entrega = Decimal("0")
-
         if not itens:
             raise ValueError("A venda precisa ter ao menos 1 item.")
 
-        consolidados: Dict[int, int] = {}
-        for it in itens:
-            pid = int(it.get("produto_id"))
-            qtd = int(it.get("qtd"))
-            if qtd <= 0:
-                raise ValueError("Quantidade inválida.")
-            consolidados[pid] = consolidados.get(pid, 0) + qtd
-
-        produto_ids = list(consolidados.keys())
+        tipo = str(tipo).strip().upper()
+        status = str(status).strip().upper()
+        forma_pagamento = str(forma_pagamento).strip()
+        desconto_dec = self._to_decimal(desconto)
+        taxa_entrega_dec = self._to_decimal(taxa_entrega)
+        data_ref = self._normalizar_datetime(data_venda) if data_venda else datetime.now()
 
         conn = None
         cur = None
+
         try:
             conn = conectar()
-            conn.start_transaction()
-            cur = conn.cursor()
+            cur = conn.cursor(dictionary=True)
 
-            codigos = self._listar_codigos_pagamento(cur)
-            forma_ok = self._normalizar_forma_pagamento(forma_pagamento, codigos_existentes=codigos)
-
-            for pid in produto_ids:
-                cur.execute(
-                    """
-                    INSERT INTO estoque (produto_id, quantidade)
-                    VALUES (%s, 0)
-                    ON DUPLICATE KEY UPDATE produto_id=produto_id
-                    """,
-                    (pid,),
-                )
-
-            placeholders = ",".join(["%s"] * len(produto_ids))
-            cur.execute(
-                f"""
-                SELECT
-                    p.id, p.nome, p.categoria, p.preco, p.ativo, p.tipo_item, p.eh_insumo,
-                    e.quantidade
-                FROM produtos p
-                JOIN estoque e ON e.produto_id = p.id
-                WHERE p.id IN ({placeholders})
-                FOR UPDATE
-                """,
-                tuple(produto_ids),
-            )
-            rows = cur.fetchall() or []
-            mapa = {int(r[0]): r for r in rows}
-
-            itens_norm: List[Dict[str, Any]] = []
             subtotal = Decimal("0")
+            itens_processados: List[Dict[str, Any]] = []
 
-            for pid, qtd in consolidados.items():
-                if pid not in mapa:
-                    raise ValueError(f"Produto {pid} não encontrado.")
+            for item in itens:
+                produto_id = int(item.get("produto_id") or item.get("id"))
+                qtd = int(item.get("qtd") or 0)
 
-                r = mapa[pid]
-                nome = r[1]
-                ativo = int(r[4] or 0)
-                tipo_item = str(r[5] or "Produto")
-                eh_insumo = int(r[6] or 0)
-                estoque_atual = int(r[7] or 0)
+                if qtd <= 0:
+                    raise ValueError(f"Quantidade inválida para o produto {produto_id}.")
 
-                if ativo != 1:
-                    raise ValueError(f"Produto inativo: {nome}.")
-                if not permitir_insumos and (tipo_item == "Insumo" or eh_insumo == 1):
-                    raise ValueError(f"Item é insumo e não pode ser vendido: {nome}.")
-                if estoque_atual < qtd:
-                    raise ValueError(f"Estoque insuficiente para {nome}.")
+                prod = self._buscar_produto(cur, produto_id)
+                if not prod:
+                    raise ValueError(f"Produto {produto_id} não encontrado.")
 
-                unit = self._to_decimal(r[3])
-                total_item = unit * qtd
+                unitario = self._to_decimal(prod["preco"])
+                total_item = unitario * Decimal(qtd)
 
-                itens_norm.append({
-                    "produto_id": pid,
-                    "produto_nome": nome,
-                    "categoria": r[2],
-                    "qtd": qtd,
-                    "unitario": unit,
-                    "total": total_item,
-                })
                 subtotal += total_item
 
-            if desconto > subtotal:
-                desconto = subtotal
+                itens_processados.append({
+                    "produto_id": produto_id,
+                    "produto_nome": prod["nome"],
+                    "categoria": prod["categoria"],
+                    "qtd": qtd,
+                    "unitario": unitario,
+                    "total": total_item,
+                    "estoque_atual": int(prod.get("estoque_atual") or 0),
+                })
 
-            total = (subtotal - desconto) + taxa_entrega
+            total = subtotal - desconto_dec + taxa_entrega_dec
             if total < 0:
                 total = Decimal("0")
 
-            for it in itens_norm:
-                pid = int(it["produto_id"])
-                qtd = int(it["qtd"])
-                novo = int(mapa[pid][7]) - qtd
-                if novo < 0:
-                    raise ValueError("Estoque insuficiente.")
-                cur.execute("UPDATE estoque SET quantidade=%s WHERE produto_id=%s", (novo, pid))
-
+            sql_venda = """
+                INSERT INTO vendas (
+                    tipo,
+                    status,
+                    data,
+                    cliente_id,
+                    revendedor_id,
+                    fechamento_id,
+                    forma_pagamento,
+                    observacao,
+                    subtotal,
+                    desconto,
+                    taxa_entrega,
+                    total
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
             cur.execute(
-                """
-                INSERT INTO vendas
-                (tipo, status, data, cliente_id, revendedor_id, fechamento_id,
-                 forma_pagamento, observacao, subtotal, desconto, taxa_entrega, total)
-                VALUES
-                (%s, %s, %s, %s, %s, %s,
-                 %s, %s, %s, %s, %s, %s)
-                """,
+                sql_venda,
                 (
-                    tipo, status, data_ref,
-                    cliente_id, revendedor_id, fechamento_id,
-                    forma_ok, (str(observacao).strip() or None),
-                    subtotal, desconto, taxa_entrega, total
+                    tipo,
+                    status,
+                    data_ref,
+                    int(cliente_id) if cliente_id else None,
+                    int(revendedor_id) if revendedor_id else None,
+                    None,
+                    forma_pagamento,
+                    str(observacao or "").strip(),
+                    subtotal,
+                    desconto_dec,
+                    taxa_entrega_dec,
+                    total,
                 ),
             )
             venda_id = int(cur.lastrowid)
 
-            for it in itens_norm:
+            sql_item = """
+                INSERT INTO vendas_itens (
+                    venda_id,
+                    produto_id,
+                    qtd,
+                    unitario,
+                    total
+                ) VALUES (%s, %s, %s, %s, %s)
+            """
+
+            for item in itens_processados:
                 cur.execute(
-                    """
-                    INSERT INTO vendas_itens (venda_id, produto_id, qtd, unitario, total)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (venda_id, int(it["produto_id"]), int(it["qtd"]), it["unitario"], it["total"]),
+                    sql_item,
+                    (
+                        venda_id,
+                        item["produto_id"],
+                        item["qtd"],
+                        item["unitario"],
+                        item["total"],
+                    ),
                 )
 
+                # Se existir linha no estoque, reduz
+                cur.execute(
+                    "SELECT quantidade FROM estoque WHERE produto_id = %s",
+                    (item["produto_id"],),
+                )
+                row_est = cur.fetchone()
+                if row_est is not None:
+                    quantidade_atual = int(row_est["quantidade"] or 0)
+                    nova_qtd = quantidade_atual - int(item["qtd"])
+                    if nova_qtd < 0:
+                        nova_qtd = 0
+
+                    cur.execute(
+                        "UPDATE estoque SET quantidade = %s WHERE produto_id = %s",
+                        (nova_qtd, item["produto_id"]),
+                    )
+
             conn.commit()
-            return {"id": venda_id, "tipo": tipo, "status": status, "data": data_ref,
-                    "cliente_id": cliente_id, "revendedor_id": revendedor_id,
-                    "fechamento_id": fechamento_id, "forma_pagamento": forma_ok,
-                    "observacao": str(observacao).strip(),
-                    "subtotal": subtotal, "desconto": desconto,
-                    "taxa_entrega": taxa_entrega, "total": total,
-                    "itens": itens_norm}
+
+            return {
+                "id": venda_id,
+                "tipo": tipo,
+                "status": status,
+                "data": data_ref,
+                "cliente_id": int(cliente_id) if cliente_id else None,
+                "revendedor_id": int(revendedor_id) if revendedor_id else None,
+                "fechamento_id": None,
+                "forma_pagamento": forma_pagamento,
+                "observacao": str(observacao or "").strip(),
+                "subtotal": subtotal,
+                "desconto": desconto_dec,
+                "taxa_entrega": taxa_entrega_dec,
+                "total": total,
+                "itens": itens_processados,
+            }
 
         except Exception:
             if conn is not None:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
             raise
+
         finally:
             try:
                 if cur is not None:
@@ -237,42 +286,94 @@ class VendasRepository:
                 if conn is not None and conn.is_connected():
                     conn.close()
 
-    def obter_venda(self, venda_id: int, incluir_itens: bool = True) -> Optional[Dict[str, Any]]:
+    # ======================================================
+    # LISTAR VENDAS
+    # ======================================================
+    def listar_vendas(
+        self,
+        tipo: Optional[str] = None,
+        data_inicial: Optional[datetime] = None,
+        data_final: Optional[datetime] = None,
+        incluir_itens: bool = False,
+    ) -> List[Dict[str, Any]]:
         conn = None
         cur = None
+
         try:
             conn = conectar()
             cur = conn.cursor(dictionary=True)
-            cur.execute("SELECT * FROM vendas WHERE id=%s LIMIT 1", (int(venda_id),))
-            venda = cur.fetchone()
-            if not venda:
-                return None
 
-            if not incluir_itens:
-                venda["itens"] = []
-                return venda
+            sql = """
+                SELECT
+                    v.id,
+                    v.tipo,
+                    v.status,
+                    v.data,
+                    v.cliente_id,
+                    c.nome AS cliente_nome,
+                    v.revendedor_id,
+                    r.nome AS revendedor_nome,
+                    v.fechamento_id,
+                    v.forma_pagamento,
+                    v.observacao,
+                    v.subtotal,
+                    v.desconto,
+                    v.taxa_entrega,
+                    v.total
+                FROM vendas v
+                LEFT JOIN clientes c
+                    ON c.id = v.cliente_id
+                LEFT JOIN clientes r
+                    ON r.id = v.revendedor_id
+                WHERE 1=1
+            """
+            params: List[Any] = []
 
-            cur.execute(
-                """
-                SELECT i.produto_id, p.nome AS produto_nome, p.categoria,
-                       i.qtd, i.unitario, i.total
-                FROM vendas_itens i
-                JOIN produtos p ON p.id = i.produto_id
-                WHERE i.venda_id=%s
-                ORDER BY i.id ASC
-                """,
-                (int(venda_id),)
-            )
-            itens = cur.fetchall() or []
-            venda["itens"] = [{
-                "produto_id": int(it["produto_id"]),
-                "produto_nome": it["produto_nome"],
-                "categoria": it["categoria"],
-                "qtd": int(it["qtd"]),
-                "unitario": self._to_decimal(it["unitario"]),
-                "total": self._to_decimal(it["total"]),
-            } for it in itens]
-            return venda
+            if tipo:
+                sql += " AND v.tipo = %s"
+                params.append(str(tipo).strip().upper())
+
+            if data_inicial:
+                sql += " AND v.data >= %s"
+                params.append(self._normalizar_datetime(data_inicial))
+
+            if data_final:
+                sql += " AND v.data <= %s"
+                params.append(self._normalizar_datetime(data_final))
+
+            sql += " ORDER BY v.data ASC, v.id ASC"
+
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall() or []
+
+            saida: List[Dict[str, Any]] = []
+            for r in rows:
+                venda = {
+                    "id": int(r["id"]),
+                    "tipo": r["tipo"],
+                    "status": r["status"],
+                    "data": r["data"],
+                    "cliente_id": r["cliente_id"],
+                    "cliente_nome": r.get("cliente_nome"),
+                    "revendedor_id": r["revendedor_id"],
+                    "revendedor_nome": r.get("revendedor_nome"),
+                    "fechamento_id": r["fechamento_id"],
+                    "forma_pagamento": r["forma_pagamento"],
+                    "observacao": r["observacao"],
+                    "subtotal": self._to_decimal(r["subtotal"]),
+                    "desconto": self._to_decimal(r["desconto"]),
+                    "taxa_entrega": self._to_decimal(r["taxa_entrega"]),
+                    "total": self._to_decimal(r["total"]),
+                    "itens": [],
+                }
+
+                if incluir_itens:
+                    venda["itens"] = self._listar_itens_da_venda(cur, venda["id"])
+
+                saida.append(venda)
+
+            return saida
+
         finally:
             try:
                 if cur is not None:
@@ -281,51 +382,50 @@ class VendasRepository:
                 if conn is not None and conn.is_connected():
                     conn.close()
 
-    def cancelar_venda(self, venda_id: int) -> None:
+    # ======================================================
+    # RESUMO POR DIA
+    # ======================================================
+    def resumo_por_dia(self, dia: date) -> Dict[str, Any]:
         conn = None
         cur = None
+
         try:
             conn = conectar()
-            conn.start_transaction()
             cur = conn.cursor(dictionary=True)
 
-            cur.execute("SELECT id, status FROM vendas WHERE id=%s FOR UPDATE", (int(venda_id),))
-            v = cur.fetchone()
-            if not v:
-                raise ValueError("Venda não encontrada.")
-            if str(v.get("status") or "").upper() == "CANCELADA":
-                conn.commit()
-                return
+            sql = """
+                SELECT
+                    COALESCE(SUM(CASE WHEN status <> 'CANCELADA' THEN subtotal ELSE 0 END), 0) AS vendas_brutas,
+                    COALESCE(SUM(CASE WHEN status <> 'CANCELADA' THEN desconto ELSE 0 END), 0) AS descontos,
+                    COALESCE(SUM(CASE WHEN status = 'CANCELADA' THEN total ELSE 0 END), 0) AS cancelamentos,
+                    COALESCE(SUM(CASE WHEN status <> 'CANCELADA' THEN total ELSE 0 END), 0) AS total_liquido,
 
-            cur.execute("SELECT produto_id, qtd FROM vendas_itens WHERE venda_id=%s", (int(venda_id),))
-            itens = cur.fetchall() or []
+                    COALESCE(SUM(CASE WHEN status <> 'CANCELADA' AND forma_pagamento = 'Dinheiro' THEN total ELSE 0 END), 0) AS dinheiro,
+                    COALESCE(SUM(CASE WHEN status <> 'CANCELADA' AND forma_pagamento = 'Pix' THEN total ELSE 0 END), 0) AS pix,
+                    COALESCE(SUM(CASE WHEN status <> 'CANCELADA' AND forma_pagamento IN ('Cartão', 'Cartao') THEN total ELSE 0 END), 0) AS cartao,
+                    COALESCE(SUM(CASE WHEN status <> 'CANCELADA' AND forma_pagamento = 'Prazo' THEN total ELSE 0 END), 0) AS prazo,
 
-            for it in itens:
-                pid = int(it["produto_id"])
-                qtd = int(it["qtd"] or 0)
-                if qtd <= 0:
-                    continue
+                    COALESCE(COUNT(CASE WHEN status <> 'CANCELADA' THEN 1 END), 0) AS qtd_vendas
+                FROM vendas
+                WHERE DATE(data) = %s
+            """
+            cur.execute(sql, (dia,))
+            row = cur.fetchone() or {}
 
-                cur.execute(
-                    """
-                    INSERT INTO estoque (produto_id, quantidade)
-                    VALUES (%s, 0)
-                    ON DUPLICATE KEY UPDATE produto_id=produto_id
-                    """,
-                    (pid,),
-                )
-                cur.execute("SELECT quantidade FROM estoque WHERE produto_id=%s FOR UPDATE", (pid,))
-                row = cur.fetchone() or {}
-                atual = int(row.get("quantidade") or 0)
-                cur.execute("UPDATE estoque SET quantidade=%s WHERE produto_id=%s", (atual + qtd, pid))
+            return {
+                "data_fechamento": dia,
+                "vendas_brutas": self._to_decimal(row.get("vendas_brutas", 0)),
+                "descontos": self._to_decimal(row.get("descontos", 0)),
+                "cancelamentos": self._to_decimal(row.get("cancelamentos", 0)),
+                "total_liquido": self._to_decimal(row.get("total_liquido", 0)),
+                "dinheiro": self._to_decimal(row.get("dinheiro", 0)),
+                "pix": self._to_decimal(row.get("pix", 0)),
+                "cartao": self._to_decimal(row.get("cartao", 0)),
+                "prazo": self._to_decimal(row.get("prazo", 0)),
+                "total_recebido": self._to_decimal(row.get("total_liquido", 0)),
+                "qtd_vendas": int(row.get("qtd_vendas", 0) or 0),
+            }
 
-            cur.execute("UPDATE vendas SET status='CANCELADA' WHERE id=%s", (int(venda_id),))
-            conn.commit()
-
-        except Exception:
-            if conn is not None:
-                conn.rollback()
-            raise
         finally:
             try:
                 if cur is not None:
