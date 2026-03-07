@@ -18,11 +18,7 @@ from app.database.repositories.formas_pagamento_repository import FormasPagament
 from app.database.repositories.vendas_repository import VendasRepository
 from app.database.repositories.fechamentos_repository import FechamentosRepository
 from app.database.repositories.carrinhos_repository import CarrinhosRepository
-
-# ✅ IMPORT CORRETO (seu erro era aqui, com nome quebrado)
 from app.database.repositories.agendamentos_repository import AgendamentosRepository
-
-# ✅ NOVO
 from app.database.repositories.delivery_repository import DeliveryRepository
 
 
@@ -45,7 +41,6 @@ class SistemaService:
         self.carrinhos_repo = CarrinhosRepository()
         self.agendamentos_repo = AgendamentosRepository()
 
-        # ✅ DELIVERY persistente
         self.delivery_repo = DeliveryRepository()
 
         self._clientes_estado: Dict[int, Dict[str, Any]] = {}
@@ -246,14 +241,45 @@ class SistemaService:
             ativo=ativo,
         )
 
+    def salvar_insumo(
+        self,
+        nome,
+        quantidade_inicial=0,
+        fornecedor_id=None,
+        produto_id=None,
+        ativo=False,
+    ):
+        return self.produtos_repo.salvar_insumo(
+            nome=nome,
+            quantidade_inicial=quantidade_inicial,
+            fornecedor_id=fornecedor_id,
+            produto_id=produto_id,
+            ativo=ativo,
+        )
+
     def obter_produto(self, produto_id):
         return self.produtos_repo.obter_produto(int(produto_id))
+
+    def obter_item_estoque(self, produto_id):
+        return self.produtos_repo.obter_item_estoque(int(produto_id))
 
     def excluir_produto(self, produto_id):
         return self.produtos_repo.excluir_produto(int(produto_id))
 
     def listar_catalogo(self, termo="", categoria="Todos"):
-        return self.produtos_repo.listar_catalogo(termo=termo, categoria=categoria, incluir_inativos=False)
+        return self.produtos_repo.listar_catalogo(
+            termo=termo,
+            categoria=categoria,
+            incluir_inativos=False,
+            incluir_insumos=False,
+        )
+
+    def listar_produtos(self, termo="", categoria="Todos", incluir_inativos=False):
+        return self.produtos_repo.listar_produtos_admin(
+            termo=termo,
+            categoria=categoria,
+            incluir_inativos=incluir_inativos,
+        )
 
     def ajustar_estoque(self, produto_id, delta):
         return self.produtos_repo.ajustar_estoque(int(produto_id), int(delta))
@@ -294,7 +320,7 @@ class SistemaService:
         return self.funcionarios_repo.excluir_funcionario(funcionario_id)
 
     # ======================================================
-    # MOTORISTAS (compat)
+    # MOTORISTAS
     # ======================================================
     def salvar_motorista(self, nome: str, cpf: str, telefone: str, motorista_id=None):
         if hasattr(self.funcionarios_repo, "salvar_motorista"):
@@ -351,7 +377,6 @@ class SistemaService:
 
     # ======================================================
     # AGENDAMENTOS
-    # (mantém compatibilidade; implementação real no repository)
     # ======================================================
     def salvar_agendamento(
         self,
@@ -383,11 +408,9 @@ class SistemaService:
         if fim_min <= ini_min:
             raise ValueError("Hora final deve ser maior que a inicial.")
 
-        # motoristas compat
         if motorista_id is None and funcionario_id not in (None, "", "None"):
             motorista_id = funcionario_id
 
-        # carrinho compat
         if carrinho_id in (None, "", "None"):
             raise ValueError("Selecione um carrinho.")
 
@@ -472,7 +495,6 @@ class SistemaService:
         if not itens:
             raise ValueError("A venda precisa ter ao menos 1 item.")
 
-        # compat: UI antiga manda cliente_id na revenda
         if tipo == "REVENDA" and (revendedor_id is None) and (cliente_id is not None):
             revendedor_id = cliente_id
             cliente_id = None
@@ -494,7 +516,6 @@ class SistemaService:
             status="FINALIZADA",
         )
 
-        # fidelidade automática
         cliente_para_pontos = venda.get("revendedor_id") if tipo == "REVENDA" else venda.get("cliente_id")
         if cliente_para_pontos:
             cliente = self.obter_cliente(cliente_para_pontos)
@@ -523,20 +544,12 @@ class SistemaService:
         return self.vendas_repo.listar_vendas(tipo=tipo_norm, data_inicial=dt_ini, data_final=dt_fim, incluir_itens=True)
 
     # ======================================================
-    # DELIVERY (persistente + gera venda)
+    # DELIVERY
     # ======================================================
     def _status_delivery_gera_venda(self, status: str) -> bool:
         return str(status or "").strip() in {"Em preparo", "Em rota", "Entregue"}
 
     def salvar_pedido_delivery(self, pedido: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Recebe o dict no formato que a UI já usa:
-        {
-          id?, data, prev, cliente:{nome,telefone}, endereco:{...},
-          itens:[{id/produto_id, qtd, preco?}],
-          taxa, pagamento, status, entregador_id, obs
-        }
-        """
         if not isinstance(pedido, dict):
             raise ValueError("Pedido inválido.")
 
@@ -587,7 +600,6 @@ class SistemaService:
             itens=itens,
         )
 
-        # se status exige venda e ainda não tem venda_id -> registra venda e vincula
         if self._status_delivery_gera_venda(salvo.get("status")) and not salvo.get("venda_id"):
             venda = self.registrar_venda(
                 tipo="DELIVERY",
@@ -643,7 +655,7 @@ class SistemaService:
         if not dia:
             dia = date.today()
         rows = self.delivery_repo.listar_por_data(dia)
-        # lista é leve (sem itens). UI usa para tabela e, ao editar, chama obter_delivery.
+
         saida = []
         for r in rows:
             saida.append({

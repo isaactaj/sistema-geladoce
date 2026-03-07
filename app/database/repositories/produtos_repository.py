@@ -11,15 +11,12 @@ class ProdutosRepository:
     """
     Repositório de Produtos/Estoque no MySQL.
 
-    Tabelas:
-      - produtos
-      - estoque
-
-    Regras:
-      - cria/garante linha de estoque
-      - nunca deixa estoque negativo
-      - exclusão padrão: inativação (ativo=0)
-      - CATÁLOGO (vendas): por padrão NÃO retorna insumos
+    Responsabilidades:
+      - produtos de venda
+      - insumos internos
+      - estoque consolidado
+      - catálogo de vendas
+      - cadastro administrativo de produtos
     """
 
     CATEGORIAS_VALIDAS = {"Sorvete", "Picolé", "Açaí", "Outros"}
@@ -58,16 +55,53 @@ class ProdutosRepository:
         return cat_norm
 
     def _normalizar_tipo_item(self, tipo_item: Any, eh_insumo: Any) -> Tuple[str, int]:
-        if eh_insumo is True:
+        if eh_insumo is True or eh_insumo == 1:
             return "Insumo", 1
+
         txt = str(tipo_item or "").strip()
         if not txt:
             return "Produto", 0
+
         if txt.lower() in ("insumo", "insumos", "matéria-prima", "materia-prima", "materia prima"):
             return "Insumo", 1
+
         if txt not in self.TIPOS_ITEM_VALIDOS:
             return "Produto", 0
+
         return txt, 1 if txt == "Insumo" else 0
+
+    def _montar_where(self, filtros: List[str]) -> str:
+        return "WHERE " + " AND ".join(filtros) if filtros else ""
+
+    def _base_select_item(self) -> str:
+        return """
+            SELECT
+                p.id,
+                p.id AS produto_id,
+                p.nome,
+                p.categoria,
+                p.preco,
+                p.ativo,
+                p.tipo_item,
+                p.eh_insumo,
+                p.fornecedor_id,
+                COALESCE(e.quantidade, 0) AS estoque,
+                COALESCE(e.quantidade, 0) AS qtd
+            FROM produtos p
+            LEFT JOIN estoque e ON e.produto_id = p.id
+        """
+
+    def _normalizar_row_item(self, row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+
+        row["id"] = int(row.get("id") or row.get("produto_id") or 0)
+        row["produto_id"] = int(row.get("produto_id") or row.get("id") or 0)
+        row["ativo"] = int(row.get("ativo") or 0)
+        row["eh_insumo"] = bool(row.get("eh_insumo") or 0)
+        row["estoque"] = int(row.get("estoque") or row.get("qtd") or 0)
+        row["qtd"] = int(row.get("qtd") or row.get("estoque") or 0)
+        return row
 
     def obter_produto(self, produto_id: int) -> Optional[Dict[str, Any]]:
         conn = None
@@ -76,24 +110,14 @@ class ProdutosRepository:
             conn = conectar()
             cur = conn.cursor(dictionary=True)
             cur.execute(
-                """
-                SELECT
-                    p.id, p.nome, p.categoria, p.preco, p.ativo,
-                    p.tipo_item, p.eh_insumo, p.fornecedor_id,
-                    COALESCE(e.quantidade, 0) AS estoque
-                FROM produtos p
-                LEFT JOIN estoque e ON e.produto_id = p.id
+                f"""
+                {self._base_select_item()}
                 WHERE p.id = %s
                 """,
                 (int(produto_id),),
             )
             row = cur.fetchone()
-            if not row:
-                return None
-            row["ativo"] = int(row.get("ativo") or 0)
-            row["eh_insumo"] = bool(row.get("eh_insumo") or 0)
-            row["estoque"] = int(row.get("estoque") or 0)
-            return row
+            return self._normalizar_row_item(row)
         finally:
             try:
                 if cur is not None:
@@ -102,6 +126,9 @@ class ProdutosRepository:
                 if conn is not None and conn.is_connected():
                     conn.close()
 
+    def obter_item_estoque(self, produto_id: int) -> Optional[Dict[str, Any]]:
+        return self.obter_produto(int(produto_id))
+
     def listar_catalogo(
         self,
         termo: str = "",
@@ -109,10 +136,6 @@ class ProdutosRepository:
         incluir_inativos: bool = False,
         incluir_insumos: bool = False,
     ) -> List[Dict[str, Any]]:
-        """
-        CATÁLOGO DE VENDAS:
-        - por padrão: ativo=1 e NÃO inclui insumos
-        """
         termo = str(termo or "").strip()
         categoria = str(categoria or "Todos").strip()
 
@@ -123,7 +146,7 @@ class ProdutosRepository:
             filtros.append("p.ativo = 1")
 
         if not incluir_insumos:
-            filtros.append("p.tipo_item <> 'Insumo'")
+            filtros.append("p.tipo_item = 'Produto'")
             filtros.append("p.eh_insumo = 0")
 
         if categoria and categoria != "Todos":
@@ -135,7 +158,7 @@ class ProdutosRepository:
             filtros.append("p.nome LIKE %s")
             params.append(f"%{termo}%")
 
-        where_sql = "WHERE " + " AND ".join(filtros) if filtros else ""
+        where_sql = self._montar_where(filtros)
 
         conn = None
         cur = None
@@ -144,23 +167,66 @@ class ProdutosRepository:
             cur = conn.cursor(dictionary=True)
             cur.execute(
                 f"""
-                SELECT
-                    p.id, p.nome, p.categoria, p.preco, p.ativo,
-                    p.tipo_item, p.eh_insumo, p.fornecedor_id,
-                    COALESCE(e.quantidade, 0) AS estoque
-                FROM produtos p
-                LEFT JOIN estoque e ON e.produto_id = p.id
+                {self._base_select_item()}
                 {where_sql}
                 ORDER BY p.nome ASC
                 """,
                 tuple(params),
             )
             rows = cur.fetchall() or []
-            for r in rows:
-                r["ativo"] = int(r.get("ativo") or 0)
-                r["eh_insumo"] = bool(r.get("eh_insumo") or 0)
-                r["estoque"] = int(r.get("estoque") or 0)
-            return rows
+            return [self._normalizar_row_item(r) for r in rows]
+        finally:
+            try:
+                if cur is not None:
+                    cur.close()
+            finally:
+                if conn is not None and conn.is_connected():
+                    conn.close()
+
+    def listar_produtos_admin(
+        self,
+        termo: str = "",
+        categoria: str = "Todos",
+        incluir_inativos: bool = False,
+    ) -> List[Dict[str, Any]]:
+        termo = str(termo or "").strip()
+        categoria = str(categoria or "Todos").strip()
+
+        filtros = [
+            "p.tipo_item = 'Produto'",
+            "p.eh_insumo = 0",
+        ]
+        params: List[Any] = []
+
+        if not incluir_inativos:
+            filtros.append("p.ativo = 1")
+
+        if categoria and categoria != "Todos":
+            cat = self._normalizar_categoria(categoria)
+            filtros.append("p.categoria = %s")
+            params.append(cat)
+
+        if termo:
+            filtros.append("p.nome LIKE %s")
+            params.append(f"%{termo}%")
+
+        where_sql = self._montar_where(filtros)
+
+        conn = None
+        cur = None
+        try:
+            conn = conectar()
+            cur = conn.cursor(dictionary=True)
+            cur.execute(
+                f"""
+                {self._base_select_item()}
+                {where_sql}
+                ORDER BY p.nome ASC
+                """,
+                tuple(params),
+            )
+            rows = cur.fetchall() or []
+            return [self._normalizar_row_item(r) for r in rows]
         finally:
             try:
                 if cur is not None:
@@ -185,11 +251,20 @@ class ProdutosRepository:
         if not nome:
             raise ValueError("Nome do produto é obrigatório.")
 
-        cat = self._normalizar_categoria(categoria)
-        preco_dec = self._to_decimal(preco)
-
         tipo_item_norm, eh_insumo_int = self._normalizar_tipo_item(tipo_item, eh_insumo)
-        ativo_int = 1 if (ativo is True or ativo == 1) else 0
+
+        if tipo_item_norm == "Insumo":
+            cat = "Outros"
+            preco_dec = Decimal("0")
+            if ativo is None:
+                ativo_int = 0
+            else:
+                ativo_int = 1 if (ativo is True or ativo == 1) else 0
+        else:
+            cat = self._normalizar_categoria(categoria)
+            preco_dec = self._to_decimal(preco)
+            ativo_int = 1 if (ativo is True or ativo == 1) else 0
+
         forn_id = int(fornecedor_id) if fornecedor_id not in (None, "", "None") else None
 
         conn = None
@@ -200,6 +275,13 @@ class ProdutosRepository:
             cur = conn.cursor(dictionary=True)
 
             if produto_id:
+                # CORREÇÃO PRINCIPAL:
+                # verifica existência antes, em vez de usar rowcount do UPDATE
+                cur.execute("SELECT id FROM produtos WHERE id = %s", (int(produto_id),))
+                existe = cur.fetchone()
+                if not existe:
+                    raise ValueError("Produto não encontrado para atualizar.")
+
                 cur.execute(
                     """
                     UPDATE produtos
@@ -213,10 +295,17 @@ class ProdutosRepository:
                         fornecedor_id=%s
                     WHERE id=%s
                     """,
-                    (nome, cat, preco_dec, ativo_int, tipo_item_norm, int(eh_insumo_int), forn_id, int(produto_id)),
+                    (
+                        nome,
+                        cat,
+                        preco_dec,
+                        ativo_int,
+                        tipo_item_norm,
+                        int(eh_insumo_int),
+                        forn_id,
+                        int(produto_id),
+                    ),
                 )
-                if cur.rowcount == 0:
-                    raise ValueError("Produto não encontrado para atualizar.")
 
                 if estoque_inicial is not None:
                     qtd = int(estoque_inicial)
@@ -248,7 +337,15 @@ class ProdutosRepository:
                 INSERT INTO produtos (nome, categoria, preco, ativo, tipo_item, eh_insumo, fornecedor_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (nome, cat, preco_dec, ativo_int, tipo_item_norm, int(eh_insumo_int), forn_id),
+                (
+                    nome,
+                    cat,
+                    preco_dec,
+                    ativo_int,
+                    tipo_item_norm,
+                    int(eh_insumo_int),
+                    forn_id,
+                ),
             )
             novo_id = int(cur.lastrowid)
 
@@ -256,11 +353,19 @@ class ProdutosRepository:
             if qtd_ini < 0:
                 raise ValueError("Estoque inicial não pode ser negativo.")
 
-            cur.execute("INSERT INTO estoque (produto_id, quantidade) VALUES (%s, %s)", (novo_id, qtd_ini))
+            cur.execute(
+                "INSERT INTO estoque (produto_id, quantidade) VALUES (%s, %s)",
+                (novo_id, qtd_ini),
+            )
+
             conn.commit()
             return self.obter_produto(novo_id) or {}
 
         except Error:
+            if conn is not None:
+                conn.rollback()
+            raise
+        except Exception:
             if conn is not None:
                 conn.rollback()
             raise
@@ -271,6 +376,26 @@ class ProdutosRepository:
             finally:
                 if conn is not None and conn.is_connected():
                     conn.close()
+
+    def salvar_insumo(
+        self,
+        nome: str,
+        quantidade_inicial: int = 0,
+        fornecedor_id: Optional[int] = None,
+        produto_id: Optional[int] = None,
+        ativo: bool = False,
+    ) -> Dict[str, Any]:
+        return self.salvar_produto(
+            nome=nome,
+            categoria="Outros",
+            preco=Decimal("0"),
+            produto_id=produto_id,
+            estoque_inicial=int(quantidade_inicial),
+            tipo_item="Insumo",
+            eh_insumo=True,
+            fornecedor_id=fornecedor_id,
+            ativo=ativo,
+        )
 
     def excluir_produto(self, produto_id: int) -> None:
         conn = None
@@ -369,7 +494,7 @@ class ProdutosRepository:
             filtros.append("p.nome LIKE %s")
             params.append(f"%{termo}%")
 
-        where_sql = "WHERE " + " AND ".join(filtros) if filtros else ""
+        where_sql = self._montar_where(filtros)
 
         conn = None
         cur = None
@@ -378,17 +503,7 @@ class ProdutosRepository:
             cur = conn.cursor(dictionary=True)
             cur.execute(
                 f"""
-                SELECT
-                    p.id AS produto_id,
-                    p.nome,
-                    p.categoria,
-                    p.preco,
-                    p.tipo_item,
-                    p.eh_insumo,
-                    p.ativo,
-                    COALESCE(e.quantidade, 0) AS qtd
-                FROM produtos p
-                LEFT JOIN estoque e ON e.produto_id = p.id
+                {self._base_select_item()}
                 {where_sql}
                 ORDER BY p.nome ASC
                 """,
@@ -398,7 +513,9 @@ class ProdutosRepository:
             rows = cur.fetchall() or []
             itens = []
             for r in rows:
+                r = self._normalizar_row_item(r)
                 qtd = int(r.get("qtd") or 0)
+
                 if qtd <= 0:
                     status = "Crítico"
                 elif qtd <= 10:
@@ -407,16 +524,17 @@ class ProdutosRepository:
                     status = "Cheio"
 
                 itens.append({
-                    "id": int(r.get("produto_id")),
-                    "produto_id": int(r.get("produto_id")),
+                    "id": r["id"],
+                    "produto_id": r["produto_id"],
                     "nome": r.get("nome", ""),
                     "qtd": qtd,
                     "status": status,
                     "categoria": r.get("categoria", "Outros"),
                     "preco": r.get("preco", Decimal("0")),
                     "tipo_item": r.get("tipo_item", "Produto"),
-                    "eh_insumo": bool(r.get("eh_insumo") or 0),
-                    "ativo": int(r.get("ativo") or 0),
+                    "eh_insumo": bool(r.get("eh_insumo", False)),
+                    "ativo": int(r.get("ativo", 0)),
+                    "fornecedor_id": r.get("fornecedor_id"),
                 })
             return itens
         finally:

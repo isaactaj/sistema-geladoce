@@ -1,9 +1,11 @@
 import customtkinter as ctk
 import datetime as dt
 from pathlib import Path
+import textwrap
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 from app.config.theme import (
     COR_FUNDO, COR_PAINEL, COR_TEXTO, COR_TEXTO_SEC, FONTE
@@ -13,11 +15,28 @@ from app.pages.relatorios.export import exportar_excel, exportar_pdf
 
 
 # ============================================================
+# Cores auxiliares dos gráficos
+# ============================================================
+COR_GRAFICO_PRIMARIA = "#38BDF8"
+COR_GRAFICO_SECUNDARIA = "#0EA5E9"
+COR_GRAFICO_SUAVE = "#E0F2FE"
+COR_BORDA_SUAVE = "#E5E7EB"
+COR_EIXO = "#CBD5E1"
+COR_GRID = "#94A3B8"
+
+
+# ============================================================
 # Widget: Card de gráfico responsivo
 # ============================================================
 class CardGraficoResponsivo(ctk.CTkFrame):
     def __init__(self, master, titulo: str, ratio: float = 0.60):
-        super().__init__(master, fg_color="#FFFFFF", corner_radius=14)
+        super().__init__(
+            master,
+            fg_color="#FFFFFF",
+            corner_radius=14,
+            border_width=1,
+            border_color=COR_BORDA_SUAVE
+        )
 
         self.ratio = ratio
         self.dpi = 100
@@ -32,33 +51,64 @@ class CardGraficoResponsivo(ctk.CTkFrame):
             font=ctk.CTkFont(family=FONTE, size=13, weight="bold"),
             text_color=COR_TEXTO
         )
-        self.lbl_titulo.grid(row=0, column=0, padx=12, pady=(10, 6), sticky="w")
+        self.lbl_titulo.grid(row=0, column=0, padx=14, pady=(12, 8), sticky="w")
 
-        self.fig = Figure(figsize=(5, 3), dpi=self.dpi)
+        self.fig = Figure(figsize=(5, 3), dpi=self.dpi, facecolor="#FFFFFF")
         self.ax = self.fig.add_subplot(111)
+        self._estilizar_eixos_base(self.ax)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self)
-        self.canvas.get_tk_widget().grid(row=1, column=0, padx=12, pady=(0, 12), sticky="nsew")
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.configure(bg="#FFFFFF", highlightthickness=0, bd=0)
+        self.canvas_widget.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="nsew")
 
         self.bind("<Configure>", self._ao_redimensionar)
 
+    def _estilizar_eixos_base(self, ax):
+        ax.set_facecolor("#FFFFFF")
+
+        # bordas
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color(COR_EIXO)
+        ax.spines["bottom"].set_color(COR_EIXO)
+        ax.spines["left"].set_linewidth(1.0)
+        ax.spines["bottom"].set_linewidth(1.0)
+
+        # ticks
+        ax.tick_params(axis="x", colors=COR_TEXTO_SEC, labelsize=9, length=0, pad=6)
+        ax.tick_params(axis="y", colors=COR_TEXTO_SEC, labelsize=9, length=0, pad=6)
+
+        # grid padrão: só no eixo Y para reduzir ruído
+        ax.grid(axis="y", linestyle="--", linewidth=0.8, alpha=0.18, color=COR_GRID)
+        ax.grid(axis="x", visible=False)
+
+        # margens internas melhores
+        ax.margins(x=0.03)
+
     def _ao_redimensionar(self, event):
-        if event.width == self._ultimo_w:
+        # Evita redraw excessivo quando a largura praticamente não mudou
+        if abs(event.width - self._ultimo_w) < 6:
             return
+
         self._ultimo_w = event.width
 
-        largura_px = max(240, event.width - 24)
-        altura_px = int(largura_px * self.ratio)
+        largura_px = max(260, event.width - 24)
+        altura_px = max(220, int(largura_px * self.ratio))
 
-        self.fig.set_size_inches(largura_px / self.dpi, altura_px / self.dpi, forward=True)
-        self.fig.tight_layout()
+        self.fig.set_size_inches(
+            largura_px / self.dpi,
+            altura_px / self.dpi,
+            forward=True
+        )
+        self.fig.subplots_adjust(left=0.10, right=0.98, top=0.95, bottom=0.18)
         self.canvas.draw_idle()
 
     def atualizar_plot(self, plot_fn):
         self.ax.clear()
+        self._estilizar_eixos_base(self.ax)
         plot_fn(self.ax)
-        self.ax.grid(True, alpha=0.2)
-        self.fig.tight_layout()
+        self.fig.subplots_adjust(left=0.10, right=0.98, top=0.95, bottom=0.18)
         self.canvas.draw_idle()
 
 
@@ -319,6 +369,70 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
     def _fmt_dinheiro(self, valor):
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+    def _fmt_dinheiro_curto(self, valor):
+        valor = float(valor)
+        abs_v = abs(valor)
+
+        if abs_v >= 1_000_000:
+            txt = f"R$ {valor / 1_000_000:.1f} mi"
+        elif abs_v >= 1_000:
+            txt = f"R$ {valor / 1_000:.1f} mil"
+        else:
+            txt = f"R$ {valor:.0f}"
+
+        return txt.replace(".", ",")
+
+    def _formatter_moeda_eixo(self, valor, _pos):
+        return self._fmt_dinheiro_curto(valor)
+
+    def _quebrar_rotulo(self, texto, largura=18):
+        texto = str(texto).strip()
+        if not texto:
+            return ""
+        return textwrap.fill(texto, width=largura)
+
+    def _desenhar_estado_vazio(self, ax, titulo, subtitulo):
+        ax.text(
+            0.5, 0.57,
+            titulo,
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=11,
+            fontweight="bold",
+            color=COR_TEXTO
+        )
+        ax.text(
+            0.5, 0.45,
+            subtitulo,
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=9,
+            color=COR_TEXTO_SEC
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.grid(False)
+        ax.spines["left"].set_visible(False)
+        ax.spines["bottom"].set_visible(False)
+
+    def _ordenar_dias_serie(self, serie):
+        def chave(valor):
+            try:
+                return (0, int(valor))
+            except (TypeError, ValueError):
+                return (1, str(valor))
+
+        dias = sorted(serie.keys(), key=chave)
+        valores = []
+        for d in dias:
+            try:
+                valores.append(float(serie[d]))
+            except Exception:
+                valores.append(0.0)
+        return dias, valores
+
     # -------------------------
     # Estado da tela
     # -------------------------
@@ -384,51 +498,176 @@ class PaginaAdminRelatorios(ctk.CTkFrame):
 
         # --------- Gráfico 1: faturamento por dia
         serie = dados.get("serie_por_dia", {}) or {}
-        dias = sorted(serie.keys())
-        valores = [float(serie[d]) for d in dias]
+        dias, valores = self._ordenar_dias_serie(serie)
 
         def plot_faturamento(ax):
+            ax.set_ylabel("Faturamento", color=COR_TEXTO_SEC, fontsize=10)
+            ax.yaxis.set_major_formatter(FuncFormatter(self._formatter_moeda_eixo))
+
             if dias and valores:
-                ax.plot(dias, valores, marker="o")
-                ax.set_ylabel("R$")
-                ax.set_title("")
-                ax.set_xticks(dias)
-            else:
-                ax.text(
-                    0.5, 0.5,
-                    "Sem vendas no período",
-                    ha="center",
-                    va="center",
-                    transform=ax.transAxes
+                x_pos = list(range(len(dias)))
+                labels_dias = [str(d) for d in dias]
+
+                # linha principal
+                ax.plot(
+                    x_pos, valores,
+                    linewidth=2.4,
+                    marker="o",
+                    markersize=5.5,
+                    color=COR_GRAFICO_SECUNDARIA,
+                    solid_capstyle="round",
+                    zorder=3
                 )
-                ax.set_ylabel("R$")
-                ax.set_title("")
-                ax.set_xticks([])
+
+                # preenchimento suave
+                ax.fill_between(
+                    x_pos, valores, 0,
+                    color=COR_GRAFICO_SUAVE,
+                    alpha=0.75,
+                    zorder=1
+                )
+
+                # linha de média
+                media = sum(valores) / len(valores) if valores else 0
+                ax.axhline(
+                    media,
+                    linestyle="--",
+                    linewidth=1.0,
+                    color=COR_GRAFICO_PRIMARIA,
+                    alpha=0.55,
+                    zorder=2
+                )
+
+                # controle de densidade do eixo X
+                if len(labels_dias) <= 8:
+                    ticks = x_pos
+                else:
+                    passo = max(1, len(labels_dias) // 7)
+                    ticks = list(range(0, len(labels_dias), passo))
+                    if ticks[-1] != len(labels_dias) - 1:
+                        ticks.append(len(labels_dias) - 1)
+
+                ax.set_xticks(ticks)
+                ax.set_xticklabels([labels_dias[i] for i in ticks])
+
+                # limites e respiro
+                maior = max(valores) if valores else 0
+                topo = maior * 1.22 if maior > 0 else 1
+                ax.set_ylim(bottom=0, top=topo)
+
+                # marcação dos valores
+                if len(valores) <= 8:
+                    for x, y in zip(x_pos, valores):
+                        ax.annotate(
+                            self._fmt_dinheiro_curto(y),
+                            (x, y),
+                            textcoords="offset points",
+                            xytext=(0, 8),
+                            ha="center",
+                            fontsize=8,
+                            color=COR_TEXTO_SEC
+                        )
+                else:
+                    idx_max = valores.index(max(valores))
+                    ax.scatter(
+                        [x_pos[idx_max]], [valores[idx_max]],
+                        s=58,
+                        color=COR_GRAFICO_PRIMARIA,
+                        edgecolors="#FFFFFF",
+                        linewidth=1.5,
+                        zorder=4
+                    )
+                    ax.annotate(
+                        f"Pico: {self._fmt_dinheiro_curto(valores[idx_max])}",
+                        (x_pos[idx_max], valores[idx_max]),
+                        textcoords="offset points",
+                        xytext=(0, 10),
+                        ha="center",
+                        fontsize=8.5,
+                        color=COR_TEXTO
+                    )
+
+                ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            else:
+                self._desenhar_estado_vazio(
+                    ax,
+                    "Sem vendas no período",
+                    "Altere o mês, ano ou os filtros para visualizar o histórico."
+                )
+                ax.set_ylabel("Faturamento", color=COR_TEXTO_SEC, fontsize=10)
 
         self.graf1.atualizar_plot(plot_faturamento)
 
         # --------- Gráfico 2: top produtos
         top = dados.get("top_produtos", []) or []
-        nomes = [x[0] for x in top]
-        qtds = [x[1] for x in top]
 
         def plot_produtos(ax):
-            if nomes and qtds:
-                ax.bar(nomes, qtds)
-                ax.set_ylabel("Qtd")
-                ax.set_title("")
-                ax.tick_params(axis="x", rotation=25)
-            else:
-                ax.text(
-                    0.5, 0.5,
-                    "Sem produtos vendidos",
-                    ha="center",
-                    va="center",
-                    transform=ax.transAxes
+            ax.set_xlabel("Quantidade vendida", color=COR_TEXTO_SEC, fontsize=10)
+
+            if top:
+                pares = []
+                for item in top:
+                    try:
+                        nome = str(item[0])
+                        qtd = float(item[1])
+                        pares.append((nome, qtd))
+                    except Exception:
+                        continue
+
+                if not pares:
+                    self._desenhar_estado_vazio(
+                        ax,
+                        "Sem produtos vendidos",
+                        "Não há dados válidos de produtos para os filtros selecionados."
+                    )
+                    ax.set_xlabel("Quantidade vendida", color=COR_TEXTO_SEC, fontsize=10)
+                    return
+
+                # Ordena do maior para o menor e limita visualmente aos 8 primeiros
+                pares.sort(key=lambda x: x[1], reverse=True)
+                pares = pares[:8]
+
+                nomes = [self._quebrar_rotulo(p[0], largura=18) for p in pares]
+                qtds = [p[1] for p in pares]
+
+                y_pos = list(range(len(nomes)))
+
+                barras = ax.barh(
+                    y_pos, qtds,
+                    height=0.58,
+                    color=COR_GRAFICO_PRIMARIA,
+                    alpha=0.88,
+                    zorder=3
                 )
-                ax.set_ylabel("Qtd")
-                ax.set_title("")
-                ax.set_xticks([])
+
+                ax.set_yticks(y_pos)
+                ax.set_yticklabels(nomes)
+                ax.invert_yaxis()
+
+                ax.grid(axis="x", linestyle="--", linewidth=0.8, alpha=0.18, color=COR_GRID)
+                ax.grid(axis="y", visible=False)
+                ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+                maior = max(qtds) if qtds else 0
+                ax.set_xlim(0, maior * 1.20 if maior > 0 else 1)
+
+                for barra, valor in zip(barras, qtds):
+                    ax.text(
+                        barra.get_width() + (maior * 0.02 if maior > 0 else 0.2),
+                        barra.get_y() + barra.get_height() / 2,
+                        f"{int(valor) if float(valor).is_integer() else valor}",
+                        va="center",
+                        ha="left",
+                        fontsize=9,
+                        color=COR_TEXTO
+                    )
+            else:
+                self._desenhar_estado_vazio(
+                    ax,
+                    "Sem produtos vendidos",
+                    "Ainda não há itens suficientes para montar o ranking."
+                )
+                ax.set_xlabel("Quantidade vendida", color=COR_TEXTO_SEC, fontsize=10)
 
         self.graf2.atualizar_plot(plot_produtos)
 

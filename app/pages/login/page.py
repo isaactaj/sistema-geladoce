@@ -39,6 +39,10 @@ class TelaLogin(ctk.CTkFrame):
         self.bg_original = None
         self.bg_img = None
 
+        # caminhos de assets
+        self.raiz_projeto = Path(__file__).resolve().parents[3]
+        self.icone_path = self.raiz_projeto / "assets" / "sorvete.ico"
+
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=0, minsize=420)
@@ -54,10 +58,8 @@ class TelaLogin(ctk.CTkFrame):
         self.lbl_bg = ctk.CTkLabel(self.frame_esquerda, text="", fg_color="transparent")
         self.lbl_bg.grid(row=0, column=0, sticky="nsew")
 
-        # tenta carregar imagem
         try:
-            raiz_projeto = Path(__file__).resolve().parents[3]
-            img_path = raiz_projeto / "assets" / "login_bg.png"
+            img_path = self.raiz_projeto / "assets" / "login_bg.png"
             if img_path.exists():
                 self.bg_original = Image.open(img_path).convert("RGB")
         except Exception:
@@ -149,7 +151,7 @@ class TelaLogin(ctk.CTkFrame):
         )
         self.btn_entrar.grid(row=7, column=0, padx=34, pady=(0, 10), sticky="w")
 
-        # NOVOS BOTÕES (Sign in / Mudar senha)
+        # Botões extras
         self.frame_extra = ctk.CTkFrame(self.form, fg_color="transparent")
         self.frame_extra.grid(row=8, column=0, padx=34, pady=(0, 10), sticky="ew")
         self.frame_extra.grid_columnconfigure((0, 1), weight=1)
@@ -204,7 +206,103 @@ class TelaLogin(ctk.CTkFrame):
         self.after(50, self._atualizar_imagem_cover)
         self.bind("<Configure>", lambda e: self.after_idle(self._atualizar_imagem_cover))
 
-        self.entrada_usuario.focus()
+        self.entrada_usuario.focus_set()
+
+    # =====================================================
+    # ÍCONE DAS JANELAS
+    # =====================================================
+    def _aplicar_icone_janela(self, janela):
+        """
+        Aplica o ícone sorvete.ico em CTkToplevel/Toplevel.
+        Em algumas versões do CustomTkinter o ícone só pega
+        depois que a janela realmente foi exibida.
+        """
+        if janela is None or not self.icone_path.exists():
+            return
+
+        caminho_ico = str(self.icone_path)
+
+        def tentar_aplicar():
+            try:
+                janela.update_idletasks()
+            except Exception:
+                pass
+
+            try:
+                janela.iconbitmap(default=caminho_ico)
+                return
+            except Exception:
+                pass
+
+            try:
+                janela.wm_iconbitmap(caminho_ico)
+                return
+            except Exception:
+                pass
+
+            try:
+                topo = janela.winfo_toplevel()
+                topo.iconbitmap(default=caminho_ico)
+                return
+            except Exception:
+                pass
+
+            try:
+                topo = janela.winfo_toplevel()
+                topo.wm_iconbitmap(caminho_ico)
+            except Exception:
+                pass
+
+        for atraso in (0, 80, 180, 350, 700):
+            try:
+                janela.after(atraso, tentar_aplicar)
+            except Exception:
+                pass
+
+        try:
+            janela.bind("<Map>", lambda _e: tentar_aplicar(), add="+")
+        except Exception:
+            pass
+
+    # =====================================================
+    # HELPERS DE JANELA / FOCO
+    # =====================================================
+    def _fechar_janela_modal(self, janela):
+        if janela is None:
+            return
+
+        try:
+            janela.grab_release()
+        except Exception:
+            pass
+
+        try:
+            janela.destroy()
+        except Exception:
+            pass
+
+    def _finalizar_criacao_usuario(self, user, cpf):
+        login_para_entrar = user.get("login", cpf)
+
+        self.entrada_usuario.delete(0, "end")
+        self.entrada_usuario.insert(0, login_para_entrar)
+        self.entrada_senha.delete(0, "end")
+
+        CTkMessagebox(
+            title="Usuário criado",
+            message=f"Usuário criado com sucesso!\n\nLogin para entrar: {login_para_entrar}",
+            icon="check",
+        )
+
+        self.after(80, lambda: self.entrada_senha.focus_set())
+
+    def _finalizar_alteracao_senha(self):
+        CTkMessagebox(
+            title="Sucesso",
+            message="Senha alterada com sucesso.",
+            icon="check",
+        )
+        self.after(80, lambda: self.entrada_usuario.focus_set())
 
     # =====================================================
     # IMAGEM "COVER"
@@ -231,7 +329,6 @@ class TelaLogin(ctk.CTkFrame):
 
             self.bg_img = ctk.CTkImage(light_image=img_cropped, size=(w, h))
             self.lbl_bg.configure(image=self.bg_img)
-
         except Exception:
             pass
 
@@ -243,20 +340,32 @@ class TelaLogin(ctk.CTkFrame):
         senha = self.entrada_senha.get().strip()
 
         if not usuario or not senha:
-            self.lbl_feedback.configure(text="Preencha usuário e senha.", text_color=theme.COR_ERRO)
+            self.lbl_feedback.configure(
+                text="Preencha usuário e senha.",
+                text_color=theme.COR_ERRO
+            )
             return
 
         try:
             dados_usuario = self.autenticar_callback(usuario, senha)
         except Exception as e:
-            self.lbl_feedback.configure(text=f"Erro ao autenticar: {e}", text_color=theme.COR_ERRO)
+            self.lbl_feedback.configure(
+                text=f"Erro ao autenticar: {e}",
+                text_color=theme.COR_ERRO
+            )
             return
 
         if not dados_usuario:
-            self.lbl_feedback.configure(text="Usuário ou senha inválidos.", text_color=theme.COR_ERRO)
+            self.lbl_feedback.configure(
+                text="Usuário ou senha inválidos.",
+                text_color=theme.COR_ERRO
+            )
             return
 
-        self.lbl_feedback.configure(text="Login realizado com sucesso.", text_color=theme.COR_SUCESSO)
+        self.lbl_feedback.configure(
+            text="Login realizado com sucesso.",
+            text_color=theme.COR_SUCESSO
+        )
         self.after(120, lambda: self.on_login_success(dados_usuario))
 
     def _sair(self):
@@ -264,11 +373,15 @@ class TelaLogin(ctk.CTkFrame):
             self.on_exit()
 
     # =====================================================
-    # SIGN IN (CRIAR USUÁRIO)
+    # CRIAR USUÁRIO
     # =====================================================
     def _abrir_cadastro_usuario(self):
         if not callable(self.criar_usuario_callback):
-            CTkMessagebox(title="Indisponível", message="Cadastro de usuário não configurado.", icon="warning")
+            CTkMessagebox(
+                title="Indisponível",
+                message="Cadastro de usuário não configurado.",
+                icon="warning"
+            )
             return
 
         win = ctk.CTkToplevel(self)
@@ -276,6 +389,8 @@ class TelaLogin(ctk.CTkFrame):
         win.geometry("460x600")
         win.transient(self.winfo_toplevel())
         win.grab_set()
+        win.protocol("WM_DELETE_WINDOW", lambda: self._fechar_janela_modal(win))
+        self._aplicar_icone_janela(win)
 
         win.grid_columnconfigure(0, weight=1)
         win.grid_rowconfigure(99, weight=1)
@@ -288,27 +403,30 @@ class TelaLogin(ctk.CTkFrame):
         )
         titulo.grid(row=0, column=0, padx=18, pady=(16, 8), sticky="w")
 
-        # Nome
         ctk.CTkLabel(
-            win, text="Nome *", font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
+            win,
+            text="Nome *",
+            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
             text_color=theme.COR_TEXTO_SEC
         ).grid(row=1, column=0, padx=18, pady=(6, 4), sticky="w")
 
         ent_nome = ctk.CTkEntry(win, height=38)
         ent_nome.grid(row=2, column=0, padx=18, sticky="ew")
 
-        # CPF
         ctk.CTkLabel(
-            win, text="CPF *", font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
+            win,
+            text="CPF *",
+            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
             text_color=theme.COR_TEXTO_SEC
         ).grid(row=3, column=0, padx=18, pady=(10, 4), sticky="w")
 
         ent_cpf = ctk.CTkEntry(win, height=38, placeholder_text="Somente números (11 dígitos)")
         ent_cpf.grid(row=4, column=0, padx=18, sticky="ew")
 
-        # Tipo acesso
         ctk.CTkLabel(
-            win, text="Tipo de acesso *", font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
+            win,
+            text="Tipo de acesso *",
+            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
             text_color=theme.COR_TEXTO_SEC
         ).grid(row=5, column=0, padx=18, pady=(10, 4), sticky="w")
 
@@ -323,32 +441,40 @@ class TelaLogin(ctk.CTkFrame):
         opt_tipo.grid(row=6, column=0, padx=18, sticky="ew")
         opt_tipo.set("Colaborador")
 
-        # Senha
         ctk.CTkLabel(
-            win, text="Senha *", font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
+            win,
+            text="Senha *",
+            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
             text_color=theme.COR_TEXTO_SEC
         ).grid(row=7, column=0, padx=18, pady=(10, 4), sticky="w")
 
         ent_senha = ctk.CTkEntry(win, height=38, show="•")
         ent_senha.grid(row=8, column=0, padx=18, sticky="ew")
 
-        # Confirmar
         ctk.CTkLabel(
-            win, text="Confirmar senha *", font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
+            win,
+            text="Confirmar senha *",
+            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
             text_color=theme.COR_TEXTO_SEC
         ).grid(row=9, column=0, padx=18, pady=(10, 4), sticky="w")
 
         ent_conf = ctk.CTkEntry(win, height=38, show="•")
         ent_conf.grid(row=10, column=0, padx=18, sticky="ew")
 
-        lbl = ctk.CTkLabel(win, text="", text_color=theme.COR_ERRO, font=ctk.CTkFont(family=theme.FONTE, size=11))
+        lbl = ctk.CTkLabel(
+            win,
+            text="",
+            text_color=theme.COR_ERRO,
+            font=ctk.CTkFont(family=theme.FONTE, size=11)
+        )
         lbl.grid(row=11, column=0, padx=18, pady=(8, 0), sticky="w")
 
         botoes = ctk.CTkFrame(win, fg_color="transparent")
         botoes.grid(row=12, column=0, padx=18, pady=(14, 18), sticky="ew")
         botoes.grid_columnconfigure((0, 1), weight=1)
 
-        def somente_digitos(v): return "".join(ch for ch in str(v) if ch.isdigit())
+        def somente_digitos(v):
+            return "".join(ch for ch in str(v) if ch.isdigit())
 
         def criar():
             nome = ent_nome.get().strip()
@@ -368,23 +494,18 @@ class TelaLogin(ctk.CTkFrame):
                 return
 
             try:
-                user = self.criar_usuario_callback(nome=nome, cpf=cpf, senha=senha, tipo_acesso=tipo)
+                user = self.criar_usuario_callback(
+                    nome=nome,
+                    cpf=cpf,
+                    senha=senha,
+                    tipo_acesso=tipo
+                )
             except Exception as e:
                 lbl.configure(text=str(e))
                 return
 
-            CTkMessagebox(
-                title="Usuário criado",
-                message=f"Usuário criado com sucesso!\n\nLogin para entrar: {user.get('login', cpf)}",
-                icon="check",
-            )
-            win.destroy()
-
-            # já preenche no login para facilitar
-            self.entrada_usuario.delete(0, "end")
-            self.entrada_usuario.insert(0, user.get("login", cpf))
-            self.entrada_senha.delete(0, "end")
-            self.entrada_senha.focus()
+            self._fechar_janela_modal(win)
+            self.after(50, lambda: self._finalizar_criacao_usuario(user, cpf))
 
         ctk.CTkButton(
             botoes,
@@ -407,20 +528,23 @@ class TelaLogin(ctk.CTkFrame):
             border_width=1,
             border_color="#DDDDDD",
             font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
-            command=win.destroy,
+            command=lambda: self._fechar_janela_modal(win),
         ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
 
-        ent_nome.focus()
+        ent_nome.focus_set()
 
     # =====================================================
     # MUDAR SENHA (ADMIN -> TROCA)
     # =====================================================
     def _abrir_fluxo_mudar_senha(self):
         if not callable(self.alterar_senha_callback):
-            CTkMessagebox(title="Indisponível", message="Alteração de senha não configurada.", icon="warning")
+            CTkMessagebox(
+                title="Indisponível",
+                message="Alteração de senha não configurada.",
+                icon="warning"
+            )
             return
 
-        # 1) autenticar admin
         self._janela_autenticar_admin(self._abrir_janela_alterar_senha)
 
     def _janela_autenticar_admin(self, on_ok):
@@ -429,6 +553,8 @@ class TelaLogin(ctk.CTkFrame):
         win.geometry("420x300")
         win.transient(self.winfo_toplevel())
         win.grab_set()
+        win.protocol("WM_DELETE_WINDOW", lambda: self._fechar_janela_modal(win))
+        self._aplicar_icone_janela(win)
 
         win.grid_columnconfigure(0, weight=1)
 
@@ -445,7 +571,12 @@ class TelaLogin(ctk.CTkFrame):
         ent_pass = ctk.CTkEntry(win, height=38, show="•", placeholder_text="Senha do admin")
         ent_pass.grid(row=2, column=0, padx=18, pady=(0, 10), sticky="ew")
 
-        lbl = ctk.CTkLabel(win, text="", text_color=theme.COR_ERRO, font=ctk.CTkFont(family=theme.FONTE, size=11))
+        lbl = ctk.CTkLabel(
+            win,
+            text="",
+            text_color=theme.COR_ERRO,
+            font=ctk.CTkFont(family=theme.FONTE, size=11)
+        )
         lbl.grid(row=3, column=0, padx=18, pady=(0, 10), sticky="w")
 
         botoes = ctk.CTkFrame(win, fg_color="transparent")
@@ -455,6 +586,7 @@ class TelaLogin(ctk.CTkFrame):
         def confirmar():
             u = ent_user.get().strip()
             p = ent_pass.get().strip()
+
             if not u or not p:
                 lbl.configure(text="Informe login e senha do admin.")
                 return
@@ -473,8 +605,8 @@ class TelaLogin(ctk.CTkFrame):
                 lbl.configure(text="A conta informada não é Administrador.")
                 return
 
-            win.destroy()
-            on_ok()
+            self._fechar_janela_modal(win)
+            self.after(50, on_ok)
 
         ctk.CTkButton(
             botoes,
@@ -497,10 +629,10 @@ class TelaLogin(ctk.CTkFrame):
             border_width=1,
             border_color="#DDDDDD",
             font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
-            command=win.destroy,
+            command=lambda: self._fechar_janela_modal(win),
         ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
 
-        ent_user.focus()
+        ent_user.focus_set()
 
     def _abrir_janela_alterar_senha(self):
         win = ctk.CTkToplevel(self)
@@ -508,6 +640,8 @@ class TelaLogin(ctk.CTkFrame):
         win.geometry("460x320")
         win.transient(self.winfo_toplevel())
         win.grab_set()
+        win.protocol("WM_DELETE_WINDOW", lambda: self._fechar_janela_modal(win))
+        self._aplicar_icone_janela(win)
 
         win.grid_columnconfigure(0, weight=1)
 
@@ -527,7 +661,12 @@ class TelaLogin(ctk.CTkFrame):
         ent_conf = ctk.CTkEntry(win, height=38, show="•", placeholder_text="Confirmar nova senha")
         ent_conf.grid(row=3, column=0, padx=18, pady=(0, 10), sticky="ew")
 
-        lbl = ctk.CTkLabel(win, text="", text_color=theme.COR_ERRO, font=ctk.CTkFont(family=theme.FONTE, size=11))
+        lbl = ctk.CTkLabel(
+            win,
+            text="",
+            text_color=theme.COR_ERRO,
+            font=ctk.CTkFont(family=theme.FONTE, size=11)
+        )
         lbl.grid(row=4, column=0, padx=18, pady=(0, 10), sticky="w")
 
         botoes = ctk.CTkFrame(win, fg_color="transparent")
@@ -552,8 +691,8 @@ class TelaLogin(ctk.CTkFrame):
                 lbl.configure(text=str(e))
                 return
 
-            CTkMessagebox(title="Sucesso", message="Senha alterada com sucesso.", icon="check")
-            win.destroy()
+            self._fechar_janela_modal(win)
+            self.after(50, self._finalizar_alteracao_senha)
 
         ctk.CTkButton(
             botoes,
@@ -576,7 +715,7 @@ class TelaLogin(ctk.CTkFrame):
             border_width=1,
             border_color="#DDDDDD",
             font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
-            command=win.destroy,
+            command=lambda: self._fechar_janela_modal(win),
         ).grid(row=0, column=1, padx=(6, 0), sticky="ew")
 
-        ent_login.focus()
+        ent_login.focus_set()

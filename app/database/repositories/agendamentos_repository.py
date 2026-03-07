@@ -4,31 +4,33 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict, List, Optional
 
-from mysql.connector import Error
 from app.database.connection import conectar
 
 
 class AgendamentosRepository:
     """
-    Tabelas:
+    Repositório compatível com o schema atual:
+
+    Tabela principal:
       - agendamentos
-      - agendamentos_carrinhos
-    View:
-      - vw_agendamentos_resumo
+
+    Relacionamentos usados:
+      - carrinhos
+      - funcionarios
 
     Regras:
-      - agendamento pode reservar N carrinhos (auto seleção)
-      - carrinho_preferido_id opcional (se vier, tenta incluir)
-      - motorista_id opcional (se vier, valida conflito)
+      - 1 carrinho por agendamento
+      - 1 motorista por agendamento
       - conflito por sobreposição:
           NOT (fim_min <= novo_inicio OR inicio_min >= novo_fim)
       - considera apenas status <> 'Cancelado'
     """
 
+    STATUS_VALIDOS = {"Agendado", "Confirmado", "Cancelado"}
+
     def _normalizar_status(self, status: Any) -> str:
         txt = str(status or "").strip()
-        validos = {"Agendado", "Confirmado", "Cancelado"}
-        return txt if txt in validos else "Agendado"
+        return txt if txt in self.STATUS_VALIDOS else "Agendado"
 
     def _to_int(self, v: Any, default: int = 0) -> int:
         try:
@@ -36,34 +38,80 @@ class AgendamentosRepository:
         except Exception:
             return default
 
+    def _normalizar_row(self, row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+
+        row["id"] = int(row.get("id") or 0)
+        row["inicio_min"] = int(row.get("inicio_min") or 0)
+        row["fim_min"] = int(row.get("fim_min") or 0)
+        row["carrinho_id"] = int(row.get("carrinho_id") or 0) if row.get("carrinho_id") is not None else None
+        row["motorista_id"] = int(row.get("motorista_id") or 0) if row.get("motorista_id") is not None else None
+
+        # Compatibilidade com estruturas antigas
+        row["quantidade_carrinhos"] = 1 if row.get("carrinho_id") else 0
+        row["carrinho_preferido_id"] = row.get("carrinho_id")
+        row["observacao"] = row.get("obs")
+
+        if row.get("carrinho_id"):
+            row["carrinhos"] = [
+                {
+                    "id": row.get("carrinho_id"),
+                    "nome": row.get("carrinho_nome"),
+                    "id_externo": row.get("carrinho_id_externo"),
+                }
+            ]
+        else:
+            row["carrinhos"] = []
+
+        return row
+
     def _validar_motorista(self, cur, motorista_id: Optional[int]) -> None:
         if motorista_id is None:
             return
-        cur.execute("SELECT id, ativo FROM funcionarios WHERE id=%s LIMIT 1", (int(motorista_id),))
+
+        cur.execute(
+            """
+            SELECT id, nome, ativo
+            FROM funcionarios
+            WHERE id = %s
+            LIMIT 1
+            """,
+            (int(motorista_id),),
+        )
         row = cur.fetchone()
         if not row:
             raise ValueError("Motorista não encontrado.")
-        ativo = int(row.get("ativo") or 0) if isinstance(row, dict) else int(row[1] or 0)
+
+        ativo = int(row.get("ativo") or 0)
         if ativo != 1:
             raise ValueError("Motorista está inativo.")
 
-    def _validar_carrinho_preferido(self, cur, carrinho_id: Optional[int]) -> None:
+    def _validar_carrinho(self, cur, carrinho_id: Optional[int]) -> None:
         if carrinho_id is None:
             return
-        cur.execute("SELECT id, ativo, status FROM carrinhos WHERE id=%s LIMIT 1", (int(carrinho_id),))
+
+        cur.execute(
+            """
+            SELECT id, nome, ativo, status
+            FROM carrinhos
+            WHERE id = %s
+            LIMIT 1
+            """,
+            (int(carrinho_id),),
+        )
         row = cur.fetchone()
         if not row:
-            raise ValueError("Carrinho preferido não encontrado.")
-        if isinstance(row, dict):
-            ativo = int(row.get("ativo") or 0)
-            status = str(row.get("status") or "")
-        else:
-            ativo = int(row[1] or 0)
-            status = str(row[2] or "")
+            raise ValueError("Carrinho não encontrado.")
+
+        ativo = int(row.get("ativo") or 0)
+        status = str(row.get("status") or "").strip()
+
         if ativo != 1:
-            raise ValueError("Carrinho preferido está inativo.")
+            raise ValueError("Carrinho está inativo.")
+
         if status == "Manutenção":
-            raise ValueError("Carrinho preferido está em Manutenção.")
+            raise ValueError("Carrinho está em manutenção.")
 
     def _conflito_motorista(
         self,
@@ -74,98 +122,50 @@ class AgendamentosRepository:
         fim_min: int,
         agendamento_id: Optional[int],
     ) -> bool:
-        params = [data_ref, int(motorista_id), int(fim_min), int(inicio_min)]
+        params: List[Any] = [data_ref, int(motorista_id), int(fim_min), int(inicio_min)]
         sql = """
             SELECT id
             FROM agendamentos
-            WHERE data=%s
+            WHERE data = %s
               AND status <> 'Cancelado'
               AND motorista_id = %s
               AND NOT (fim_min <= %s OR inicio_min >= %s)
         """
+
         if agendamento_id is not None:
             sql += " AND id <> %s"
             params.append(int(agendamento_id))
+
         sql += " LIMIT 1"
         cur.execute(sql, tuple(params))
         return cur.fetchone() is not None
 
-    def _carrinhos_ocupados(
+    def _conflito_carrinho(
         self,
         cur,
         data_ref: date,
+        carrinho_id: int,
         inicio_min: int,
         fim_min: int,
         agendamento_id: Optional[int],
-    ) -> set:
-        params = [data_ref, int(fim_min), int(inicio_min)]
+    ) -> bool:
+        params: List[Any] = [data_ref, int(carrinho_id), int(fim_min), int(inicio_min)]
         sql = """
-            SELECT ac.carrinho_id
-            FROM agendamentos a
-            JOIN agendamentos_carrinhos ac ON ac.agendamento_id = a.id
-            WHERE a.data = %s
-              AND a.status <> 'Cancelado'
-              AND NOT (a.fim_min <= %s OR a.inicio_min >= %s)
+            SELECT id
+            FROM agendamentos
+            WHERE data = %s
+              AND status <> 'Cancelado'
+              AND carrinho_id = %s
+              AND NOT (fim_min <= %s OR inicio_min >= %s)
         """
+
         if agendamento_id is not None:
-            sql += " AND a.id <> %s"
+            sql += " AND id <> %s"
             params.append(int(agendamento_id))
 
+        sql += " LIMIT 1"
         cur.execute(sql, tuple(params))
-        rows = cur.fetchall() or []
-        ocupados = set()
-        for r in rows:
-            if isinstance(r, dict):
-                ocupados.add(int(r.get("carrinho_id")))
-            else:
-                ocupados.add(int(r[0]))
-        return ocupados
-
-    def _selecionar_carrinhos_disponiveis(
-        self,
-        cur,
-        quantidade: int,
-        ocupados: set,
-        carrinho_preferido_id: Optional[int],
-    ) -> List[int]:
-        # Apenas carrinhos ativos e disponíveis
-        cur.execute(
-            """
-            SELECT id
-            FROM carrinhos
-            WHERE ativo=1 AND status='Disponível'
-            ORDER BY id ASC
-            """
-        )
-        rows = cur.fetchall() or []
-        candidatos = []
-        for r in rows:
-            cid = int(r.get("id")) if isinstance(r, dict) else int(r[0])
-            if cid in ocupados:
-                continue
-            candidatos.append(cid)
-
-        selecionados: List[int] = []
-
-        if carrinho_preferido_id is not None:
-            pid = int(carrinho_preferido_id)
-            if pid in ocupados:
-                raise ValueError("Carrinho preferido está ocupado nesse horário.")
-            if pid not in candidatos:
-                raise ValueError("Carrinho preferido não está disponível (status/ativo/ocupado).")
-            selecionados.append(pid)
-
-        for cid in candidatos:
-            if len(selecionados) >= quantidade:
-                break
-            if carrinho_preferido_id is not None and cid == int(carrinho_preferido_id):
-                continue
-            selecionados.append(cid)
-
-        if len(selecionados) < quantidade:
-            raise ValueError("Não há carrinhos suficientes disponíveis para esse horário.")
-
-        return selecionados
+        return cur.fetchone() is not None
 
     def salvar_agendamento(
         self,
@@ -174,26 +174,53 @@ class AgendamentosRepository:
         fim: str,
         inicio_min: int,
         fim_min: int,
-        quantidade_carrinhos: int,
-        local: str,
+        carrinho_id: Optional[int] = None,
+        motorista_id: Optional[int] = None,
+        local: str = "",
         status: str = "Agendado",
         obs: str = "",
-        carrinho_preferido_id: Optional[int] = None,
-        motorista_id: Optional[int] = None,
         agendamento_id: Optional[int] = None,
+        # compatibilidade com chamadas antigas
+        id_carrinho: Optional[int] = None,
+        funcionario_id: Optional[int] = None,
+        observacao: Optional[str] = None,
+        quantidade_carrinhos: Optional[int] = None,
+        carrinho_preferido_id: Optional[int] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
-        st = self._normalizar_status(status)
+        """
+        Compatibiliza chamadas novas e antigas:
+        - carrinho_id / id_carrinho / carrinho_preferido_id
+        - motorista_id / funcionario_id
+        - obs / observacao
+        """
+
+        if carrinho_id in (None, "", "None"):
+            if id_carrinho not in (None, "", "None"):
+                carrinho_id = id_carrinho
+            elif carrinho_preferido_id not in (None, "", "None"):
+                carrinho_id = carrinho_preferido_id
+
+        if motorista_id in (None, "", "None") and funcionario_id not in (None, "", "None"):
+            motorista_id = funcionario_id
+
+        if (obs is None or str(obs).strip() == "") and observacao not in (None, ""):
+            obs = observacao
+
         local = str(local or "").strip()
         if not local:
             raise ValueError("Local é obrigatório.")
 
-        qtd = self._to_int(quantidade_carrinhos, 1)
-        if qtd <= 0:
-            qtd = 1
+        if carrinho_id in (None, "", "None"):
+            raise ValueError("Carrinho é obrigatório.")
 
+        if motorista_id in (None, "", "None"):
+            raise ValueError("Motorista é obrigatório.")
+
+        st = self._normalizar_status(status)
+        carrinho_id = int(carrinho_id)
+        motorista_id = int(motorista_id)
         obs_txt = str(obs or "").strip() or None
-        carrinho_pref = int(carrinho_preferido_id) if carrinho_preferido_id not in (None, "", "None") else None
-        motorista = int(motorista_id) if motorista_id not in (None, "", "None") else None
 
         conn = None
         cur = None
@@ -202,78 +229,79 @@ class AgendamentosRepository:
             conn.start_transaction()
             cur = conn.cursor(dictionary=True)
 
-            # valida entidades (se vierem)
-            self._validar_motorista(cur, motorista)
-            self._validar_carrinho_preferido(cur, carrinho_pref)
+            # valida entidades
+            self._validar_carrinho(cur, carrinho_id)
+            self._validar_motorista(cur, motorista_id)
 
-            # conflito motorista (se houver)
-            if motorista is not None:
-                if self._conflito_motorista(cur, data, motorista, inicio_min, fim_min, agendamento_id):
-                    raise ValueError("Conflito: motorista já está agendado nesse horário.")
+            # valida conflito de carrinho
+            if self._conflito_carrinho(cur, data, carrinho_id, inicio_min, fim_min, agendamento_id):
+                raise ValueError("Conflito: carrinho já está agendado nesse horário.")
 
-            # carrinhos ocupados por sobreposição
-            ocupados = self._carrinhos_ocupados(cur, data, inicio_min, fim_min, agendamento_id)
+            # valida conflito de motorista
+            if self._conflito_motorista(cur, data, motorista_id, inicio_min, fim_min, agendamento_id):
+                raise ValueError("Conflito: motorista já está agendado nesse horário.")
 
-            # escolhe carrinhos disponíveis
-            carrinhos_escolhidos = self._selecionar_carrinhos_disponiveis(
-                cur=cur,
-                quantidade=qtd,
-                ocupados=ocupados,
-                carrinho_preferido_id=carrinho_pref,
-            )
-
-            # salva agendamento base
             if agendamento_id is None:
                 cur.execute(
                     """
                     INSERT INTO agendamentos
                     (data, inicio, fim, inicio_min, fim_min,
-                     quantidade_carrinhos, carrinho_preferido_id, motorista_id,
-                     local, status, obs)
+                     carrinho_id, motorista_id, local, status, obs)
                     VALUES
                     (%s, %s, %s, %s, %s,
-                     %s, %s, %s,
-                     %s, %s, %s)
+                     %s, %s, %s, %s, %s)
                     """,
                     (
-                        data, inicio, fim, int(inicio_min), int(fim_min),
-                        int(qtd), carrinho_pref, motorista,
-                        local, st, obs_txt
+                        data,
+                        inicio,
+                        fim,
+                        int(inicio_min),
+                        int(fim_min),
+                        carrinho_id,
+                        motorista_id,
+                        local,
+                        st,
+                        obs_txt,
                     ),
                 )
                 ag_id = int(cur.lastrowid)
             else:
                 ag_id = int(agendamento_id)
+
+                cur.execute("SELECT id FROM agendamentos WHERE id = %s LIMIT 1", (ag_id,))
+                existe = cur.fetchone()
+                if not existe:
+                    raise ValueError("Agendamento não encontrado para atualizar.")
+
                 cur.execute(
                     """
                     UPDATE agendamentos
-                    SET data=%s, inicio=%s, fim=%s, inicio_min=%s, fim_min=%s,
-                        quantidade_carrinhos=%s,
-                        carrinho_preferido_id=%s,
-                        motorista_id=%s,
-                        local=%s, status=%s, obs=%s
-                    WHERE id=%s
+                    SET
+                        data = %s,
+                        inicio = %s,
+                        fim = %s,
+                        inicio_min = %s,
+                        fim_min = %s,
+                        carrinho_id = %s,
+                        motorista_id = %s,
+                        local = %s,
+                        status = %s,
+                        obs = %s
+                    WHERE id = %s
                     """,
                     (
-                        data, inicio, fim, int(inicio_min), int(fim_min),
-                        int(qtd),
-                        carrinho_pref,
-                        motorista,
-                        local, st, obs_txt,
-                        ag_id
+                        data,
+                        inicio,
+                        fim,
+                        int(inicio_min),
+                        int(fim_min),
+                        carrinho_id,
+                        motorista_id,
+                        local,
+                        st,
+                        obs_txt,
+                        ag_id,
                     ),
-                )
-                if cur.rowcount == 0:
-                    raise ValueError("Agendamento não encontrado para atualizar.")
-
-                # refaz mapeamento
-                cur.execute("DELETE FROM agendamentos_carrinhos WHERE agendamento_id=%s", (ag_id,))
-
-            # insere mapeamento carrinhos
-            for cid in carrinhos_escolhidos:
-                cur.execute(
-                    "INSERT INTO agendamentos_carrinhos (agendamento_id, carrinho_id) VALUES (%s, %s)",
-                    (ag_id, int(cid)),
                 )
 
             conn.commit()
@@ -298,10 +326,32 @@ class AgendamentosRepository:
             conn = conectar()
             cur = conn.cursor(dictionary=True)
             cur.execute(
-                "SELECT * FROM vw_agendamentos_resumo WHERE id=%s LIMIT 1",
+                """
+                SELECT
+                    a.id,
+                    a.data,
+                    a.inicio,
+                    a.fim,
+                    a.inicio_min,
+                    a.fim_min,
+                    a.carrinho_id,
+                    a.motorista_id,
+                    a.local,
+                    a.status,
+                    a.obs,
+                    a.cadastro,
+                    c.nome AS carrinho_nome,
+                    c.id_externo AS carrinho_id_externo,
+                    f.nome AS motorista_nome
+                FROM agendamentos a
+                LEFT JOIN carrinhos c ON c.id = a.carrinho_id
+                LEFT JOIN funcionarios f ON f.id = a.motorista_id
+                WHERE a.id = %s
+                LIMIT 1
+                """,
                 (int(agendamento_id),),
             )
-            return cur.fetchone()
+            return self._normalizar_row(cur.fetchone())
         finally:
             try:
                 if cur is not None:
@@ -322,17 +372,17 @@ class AgendamentosRepository:
         params: List[Any] = []
 
         if not incluir_cancelados:
-            where.append("status <> 'Cancelado'")
+            where.append("a.status <> 'Cancelado'")
 
         if data is not None:
-            where.append("data = %s")
+            where.append("a.data = %s")
             params.append(data)
         else:
             if data_inicial is not None:
-                where.append("data >= %s")
+                where.append("a.data >= %s")
                 params.append(data_inicial)
             if data_final is not None:
-                where.append("data <= %s")
+                where.append("a.data <= %s")
                 params.append(data_final)
 
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
@@ -344,15 +394,33 @@ class AgendamentosRepository:
             cur = conn.cursor(dictionary=True)
             cur.execute(
                 f"""
-                SELECT *
-                FROM vw_agendamentos_resumo
+                SELECT
+                    a.id,
+                    a.data,
+                    a.inicio,
+                    a.fim,
+                    a.inicio_min,
+                    a.fim_min,
+                    a.carrinho_id,
+                    a.motorista_id,
+                    a.local,
+                    a.status,
+                    a.obs,
+                    a.cadastro,
+                    c.nome AS carrinho_nome,
+                    c.id_externo AS carrinho_id_externo,
+                    f.nome AS motorista_nome
+                FROM agendamentos a
+                LEFT JOIN carrinhos c ON c.id = a.carrinho_id
+                LEFT JOIN funcionarios f ON f.id = a.motorista_id
                 {where_sql}
-                ORDER BY data ASC, inicio_min ASC, id ASC
+                ORDER BY a.data ASC, a.inicio_min ASC, a.id ASC
                 LIMIT %s
                 """,
                 tuple(params + [int(limite)]),
             )
-            return cur.fetchall() or []
+            rows = cur.fetchall() or []
+            return [self._normalizar_row(r) for r in rows]
         finally:
             try:
                 if cur is not None:
@@ -367,7 +435,7 @@ class AgendamentosRepository:
         try:
             conn = conectar()
             cur = conn.cursor()
-            cur.execute("DELETE FROM agendamentos WHERE id=%s", (int(agendamento_id),))
+            cur.execute("DELETE FROM agendamentos WHERE id = %s", (int(agendamento_id),))
             conn.commit()
         finally:
             try:

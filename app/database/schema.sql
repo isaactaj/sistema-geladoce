@@ -7,7 +7,6 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
--- Se estiver recriando do zero, essas linhas ajudam a reimportar sem dor:
 DROP VIEW IF EXISTS vw_fechamentos_resumo;
 
 DROP TABLE IF EXISTS delivery_itens;
@@ -49,7 +48,6 @@ CREATE TABLE clientes (
     tipo_cliente ENUM('Varejo', 'Revendedor') NOT NULL DEFAULT 'Varejo',
     status ENUM('Ativo', 'Inativo') NOT NULL DEFAULT 'Ativo',
 
-    -- campos que seu sistema já usa/espera
     pontos_atuais INT NOT NULL DEFAULT 0,
     total_acumulado INT NOT NULL DEFAULT 0,
     ultima_compra DATETIME NULL,
@@ -103,7 +101,7 @@ CREATE TABLE funcionarios (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
--- 4) USUÁRIOS (LOGIN) — FK por CPF (como seu projeto já usa)
+-- 4) USUÁRIOS (LOGIN)
 -- ============================================================
 CREATE TABLE usuarios (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -145,6 +143,9 @@ CREATE TABLE carrinhos (
 
 -- ============================================================
 -- 6) PRODUTOS
+-- tipo_item + eh_insumo são os campos que separam:
+--   - Produto: aparece em catálogo/produtos/vendas
+--   - Insumo: aparece apenas no estoque
 -- ============================================================
 CREATE TABLE produtos (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -171,7 +172,7 @@ CREATE TABLE produtos (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
--- 7) ESTOQUE (saldo atual)
+-- 7) ESTOQUE
 -- ============================================================
 CREATE TABLE estoque (
     produto_id INT PRIMARY KEY,
@@ -184,7 +185,7 @@ CREATE TABLE estoque (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
--- 8) FORMAS DE PAGAMENTO (códigos que seu código/GUI usa)
+-- 8) FORMAS DE PAGAMENTO
 -- ============================================================
 CREATE TABLE formas_pagamento (
     codigo VARCHAR(30) PRIMARY KEY,
@@ -200,7 +201,7 @@ INSERT INTO formas_pagamento (codigo, descricao) VALUES
 ON DUPLICATE KEY UPDATE descricao = VALUES(descricao);
 
 -- ============================================================
--- 9) FECHAMENTOS (por data, como seu FechamentosRepository usa)
+-- 9) FECHAMENTOS
 -- ============================================================
 CREATE TABLE fechamentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -227,7 +228,7 @@ CREATE TABLE fechamentos (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
--- 10) VENDAS (BALCAO / REVENDA / DELIVERY)
+-- 10) VENDAS
 -- ============================================================
 CREATE TABLE vendas (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -237,7 +238,6 @@ CREATE TABLE vendas (
 
     cliente_id INT NULL,
     revendedor_id INT NULL,
-
     fechamento_id INT NULL,
 
     forma_pagamento VARCHAR(30) NOT NULL,
@@ -304,7 +304,7 @@ CREATE TABLE vendas_itens (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
--- 12) MOVIMENTAÇÕES DE FIDELIDADE (compatível com seu repo atual)
+-- 12) MOVIMENTAÇÕES DE FIDELIDADE
 -- ============================================================
 CREATE TABLE mov_fidelidade (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -338,7 +338,7 @@ CREATE TABLE mov_fidelidade (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
--- 13) AGENDAMENTOS (formato do seu projeto atual)
+-- 13) AGENDAMENTOS
 -- ============================================================
 CREATE TABLE agendamentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -371,7 +371,7 @@ CREATE TABLE agendamentos (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
--- 14) DELIVERY (persistente) - compatível com a integração atual
+-- 14) DELIVERY
 -- ============================================================
 CREATE TABLE delivery_pedidos (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -379,7 +379,7 @@ CREATE TABLE delivery_pedidos (
     data DATE NOT NULL,
     prev_saida VARCHAR(5) NULL,
 
-    cliente_id INT NULL, -- opcional (se um dia você quiser vincular)
+    cliente_id INT NULL,
     cliente_nome VARCHAR(150) NOT NULL,
     cliente_telefone VARCHAR(30) NOT NULL,
 
@@ -456,7 +456,7 @@ CREATE TABLE delivery_itens (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================
--- 15) VIEW: RESUMO DE FECHAMENTO (compatível)
+-- 15) VIEW: RESUMO DE FECHAMENTO
 -- ============================================================
 CREATE OR REPLACE VIEW vw_fechamentos_resumo AS
 SELECT
@@ -475,20 +475,22 @@ SELECT
 
     COALESCE(SUM(CASE WHEN v.status <> 'CANCELADA' THEN v.total ELSE 0 END), 0) AS total_recebido,
 
-    (f.caixa_inicial
+    (
+        f.caixa_inicial
         + COALESCE(SUM(CASE WHEN v.status <> 'CANCELADA' AND v.forma_pagamento = 'Dinheiro' THEN v.total ELSE 0 END), 0)
         - f.sangria
     ) AS previsto_em_caixa,
 
-    (f.contado_caixa
-        - (f.caixa_inicial
+    (
+        f.contado_caixa
+        - (
+            f.caixa_inicial
             + COALESCE(SUM(CASE WHEN v.status <> 'CANCELADA' AND v.forma_pagamento = 'Dinheiro' THEN v.total ELSE 0 END), 0)
             - f.sangria
-          )
+        )
     ) AS diferenca,
 
     COALESCE(SUM(CASE WHEN v.status <> 'CANCELADA' THEN 1 ELSE 0 END), 0) AS qtd_vendas
-
 FROM fechamentos f
 LEFT JOIN vendas v
     ON (

@@ -1,6 +1,14 @@
+from __future__ import annotations
+
 import customtkinter as ctk
 from tkinter import ttk
-from CTkMessagebox import CTkMessagebox
+from datetime import datetime
+
+try:
+    from CTkMessagebox import CTkMessagebox
+except Exception:
+    CTkMessagebox = None
+
 from app.config import theme
 
 
@@ -10,25 +18,33 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         self.sistema = sistema
 
-        # Layout geral (catálogo + carrinho)
-        self.grid_columnconfigure(0, weight=3)  # catálogo
-        self.grid_columnconfigure(1, weight=2)  # carrinho
+        self.grid_columnconfigure(0, weight=3)
+        self.grid_columnconfigure(1, weight=2)
 
-        self.grid_rowconfigure(0, weight=0)  # topo
-        self.grid_rowconfigure(1, weight=0)  # subtítulo
-        self.grid_rowconfigure(2, weight=0)  # filtros
-        self.grid_rowconfigure(3, weight=1)  # catálogo cresce
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=0)
+        self.grid_rowconfigure(2, weight=0)
+        self.grid_rowconfigure(3, weight=1)
 
-        # Estado (catálogo + carrinho)
+        # ---------------- estado ----------------
         self.busca_var = ctk.StringVar(value="")
         self.tipo_var = ctk.StringVar(value="Todos")
-        self.carrinho = []  # lista de dicts: {id, nome, preco, qtd, categoria}
+        self.carrinho = []
 
-        # Estado (cliente opcional)
         self.vincular_cliente_var = ctk.BooleanVar(value=False)
         self.cliente_busca_var = ctk.StringVar(value="")
         self.cliente_selecionado = None
         self._clientes_filtrados = []
+
+        self.formas_pagamento = self._listar_formas_pagamento()
+
+        # refs
+        self.tree = None
+        self.lista_carrinho = None
+        self.combo_pag = None
+        self.lbl_subtotal = None
+        self.lbl_total = None
+        self.lbl_pontos_previstos = None
 
         # UI
         self._topo()
@@ -37,11 +53,37 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         self._carrinho_ui()
 
         self._render_catalogo()
-        self._toggle_cliente()  # deixa o bloco de cliente desabilitado por padrão
+        self._toggle_cliente()
 
     # =========================================================
-    # HELPERS
+    # HELPERS GERAIS
     # =========================================================
+    def _msg(self, title, message, icon="info"):
+        if CTkMessagebox is not None:
+            CTkMessagebox(title=title, message=message, icon=icon)
+        else:
+            print(f"[{title}] {message}")
+
+    def _agora_para_banco(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _listar_formas_pagamento(self):
+        padrao = ["Dinheiro", "Pix", "Cartão", "Cartao", "Prazo"]
+
+        if not self.sistema or not hasattr(self.sistema, "listar_formas_pagamento"):
+            return padrao
+
+        try:
+            formas = self.sistema.listar_formas_pagamento() or []
+            codigos = []
+            for item in formas:
+                codigo = str(item.get("codigo", "")).strip()
+                if codigo and codigo not in codigos:
+                    codigos.append(codigo)
+            return codigos or padrao
+        except Exception:
+            return padrao
+
     def _listar_clientes(self, termo=""):
         try:
             return self.sistema.listar_clientes(termo=termo)
@@ -79,10 +121,6 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         return max(estoque_real - reservado, 0)
 
     def _extrair_subgrupo(self, produto):
-        """
-        Mantém a ideia visual de hierarquia (tipo -> subgrupo -> produto),
-        mesmo com catálogo central sem campo 'sabor'.
-        """
         nome = str(produto.get("nome", "")).strip()
 
         if "•" in nome:
@@ -100,7 +138,51 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         return "Itens"
 
-    # ---------------- UI ----------------
+    def _fmt_money(self, valor):
+        try:
+            return theme.fmt_dinheiro(float(valor))
+        except Exception:
+            return f"R$ {float(valor):.2f}"
+
+    def _calcular_subtotal(self):
+        subtotal = 0.0
+        for item in self.carrinho:
+            subtotal += float(item["preco"]) * int(item["qtd"])
+        return subtotal
+
+    def _calcular_pontos_previstos(self, valor_base):
+        if not self.cliente_selecionado:
+            return 0
+
+        if not self.sistema or not hasattr(self.sistema, "calcular_pontos_rn05"):
+            return 0
+
+        tipo = str(self.cliente_selecionado.get("tipo_cliente", "Varejo"))
+        try:
+            return int(self.sistema.calcular_pontos_rn05(tipo, valor_base))
+        except Exception:
+            return 0
+
+    def _atualizar_resumo_venda(self):
+        subtotal = self._calcular_subtotal()
+        total = subtotal
+        pontos = self._calcular_pontos_previstos(total)
+
+        if self.lbl_subtotal is not None:
+            self.lbl_subtotal.configure(text=f"Subtotal: {self._fmt_money(subtotal)}")
+
+        if self.lbl_total is not None:
+            self.lbl_total.configure(text=f"Total: {self._fmt_money(total)}")
+
+        if self.lbl_pontos_previstos is not None:
+            if self.cliente_selecionado:
+                self.lbl_pontos_previstos.configure(text=f"RN05 prevista: {pontos} ponto(s)")
+            else:
+                self.lbl_pontos_previstos.configure(text="RN05 prevista: vincule um cliente")
+
+    # =========================================================
+    # UI
+    # =========================================================
     def _topo(self):
         ctk.CTkLabel(
             self,
@@ -111,7 +193,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         ctk.CTkLabel(
             self,
-            text="Selecione produtos, confira estoque e finalize a venda.",
+            text="Selecione produtos, vincule cliente se desejar e finalize a venda.",
             font=ctk.CTkFont(family=theme.FONTE, size=13),
             text_color=theme.COR_TEXTO_SEC
         ).grid(row=1, column=0, columnspan=2, padx=30, pady=(0, 12), sticky="w")
@@ -146,16 +228,20 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         box.grid_columnconfigure(0, weight=1)
 
         style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Treeview", font=(theme.FONTE, 12), rowheight=30)
-        style.configure("Treeview.Heading", font=(theme.FONTE, 12, "bold"))
-        style.map("Treeview", background=[("selected", theme.COR_HOVER)])
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
 
-        # Treeview com hierarquia (tipo -> subgrupo -> produto)
+        style.configure("Balcao.Treeview", font=(theme.FONTE, 12), rowheight=30)
+        style.configure("Balcao.Treeview.Heading", font=(theme.FONTE, 12, "bold"))
+        style.map("Balcao.Treeview", background=[("selected", theme.COR_HOVER)])
+
         self.tree = ttk.Treeview(
             box,
             columns=("preco", "estoque"),
-            show="tree headings"
+            show="tree headings",
+            style="Balcao.Treeview"
         )
         self.tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
 
@@ -171,10 +257,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         scroll_y.grid(row=0, column=1, sticky="ns", padx=(0, 12), pady=12)
         self.tree.configure(yscrollcommand=scroll_y.set)
 
-        # Duplo clique no produto para adicionar ao carrinho
         self.tree.bind("<Double-1>", lambda e: self._adicionar_selecionado())
-
-        # destaque item sem estoque
         self.tree.tag_configure("sem_estoque", foreground="#888888")
 
     def _carrinho_ui(self):
@@ -182,13 +265,10 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         box.grid(row=2, column=1, rowspan=2, padx=(12, 30), pady=(0, 20), sticky="nsew")
         box.grid_columnconfigure(0, weight=1)
 
-        # rows do carrinho
-        box.grid_rowconfigure(0, weight=0)  # título
-        box.grid_rowconfigure(1, weight=0)  # cliente
-        box.grid_rowconfigure(2, weight=0)  # total
-        box.grid_rowconfigure(3, weight=1)  # lista carrinho (cresce)
-        box.grid_rowconfigure(4, weight=0)  # pagamento
-        box.grid_rowconfigure(5, weight=0)  # finalizar
+        box.grid_rowconfigure(0, weight=0)
+        box.grid_rowconfigure(1, weight=0)
+        box.grid_rowconfigure(2, weight=1)
+        box.grid_rowconfigure(3, weight=0)
 
         ctk.CTkLabel(
             box,
@@ -197,7 +277,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
             text_color=theme.COR_TEXTO
         ).grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
 
-        # ===== Cliente (opcional) =====
+        # Cliente
         self.cliente_box = ctk.CTkFrame(box, fg_color="#FFFFFF", corner_radius=14)
         self.cliente_box.grid(row=1, column=0, padx=16, pady=(0, 10), sticky="ew")
         self.cliente_box.grid_columnconfigure(0, weight=1)
@@ -208,7 +288,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         ctk.CTkLabel(
             top_line,
-            text="Cliente (opcional)",
+            text="Cliente vinculado",
             font=ctk.CTkFont(family=theme.FONTE, size=13, weight="bold"),
             text_color=theme.COR_TEXTO
         ).grid(row=0, column=0, sticky="w")
@@ -256,41 +336,84 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         )
         self.btn_remover_cliente.grid(row=4, column=0, padx=12, pady=(0, 12), sticky="ew")
 
-        # ===== Total =====
+        # Lista do carrinho
+        carrinho_box = ctk.CTkFrame(box, fg_color="transparent")
+        carrinho_box.grid(row=2, column=0, padx=16, pady=(0, 12), sticky="nsew")
+        carrinho_box.grid_columnconfigure(0, weight=1)
+        carrinho_box.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            carrinho_box,
+            text="Itens da venda",
+            font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
+            text_color=theme.COR_TEXTO
+        ).grid(row=0, column=0, pady=(0, 8), sticky="w")
+
+        self.lista_carrinho = ctk.CTkScrollableFrame(carrinho_box, fg_color="transparent", height=260)
+        self.lista_carrinho.grid(row=1, column=0, sticky="nsew")
+
+        # Rodapé limpo
+        footer = ctk.CTkFrame(box, fg_color="#FFFFFF", corner_radius=14)
+        footer.grid(row=3, column=0, padx=16, pady=(0, 16), sticky="ew")
+        footer.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            footer,
+            text="Forma de pagamento",
+            font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
+            text_color=theme.COR_TEXTO
+        ).grid(row=0, column=0, padx=12, pady=(10, 4), sticky="w")
+
+        self.combo_pag = ctk.CTkComboBox(
+            footer,
+            values=self.formas_pagamento,
+            width=180
+        )
+        self.combo_pag.set(self.formas_pagamento[0] if self.formas_pagamento else "Pix")
+        self.combo_pag.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="ew")
+
+        self.lbl_subtotal = ctk.CTkLabel(
+            footer,
+            text="Subtotal: R$ 0,00",
+            font=ctk.CTkFont(family=theme.FONTE, size=12),
+            text_color=theme.COR_TEXTO_SEC
+        )
+        self.lbl_subtotal.grid(row=2, column=0, padx=12, pady=(0, 0), sticky="w")
+
         self.lbl_total = ctk.CTkLabel(
-            box,
+            footer,
             text="Total: R$ 0,00",
             font=ctk.CTkFont(family=theme.FONTE, size=14, weight="bold"),
             text_color=theme.COR_TEXTO
         )
-        self.lbl_total.grid(row=2, column=0, padx=16, pady=(0, 8), sticky="w")
+        self.lbl_total.grid(row=3, column=0, padx=12, pady=(2, 0), sticky="w")
 
-        # ===== Lista carrinho =====
-        self.lista_carrinho = ctk.CTkScrollableFrame(box, fg_color="transparent", height=260)
-        self.lista_carrinho.grid(row=3, column=0, padx=16, pady=(0, 12), sticky="nsew")
-
-        # ===== Pagamento =====
-        self.combo_pag = ctk.CTkComboBox(
-            box, values=["Dinheiro", "Pix", "Cartão"], width=180
+        self.lbl_pontos_previstos = ctk.CTkLabel(
+            footer,
+            text="RN05 prevista: vincule um cliente",
+            font=ctk.CTkFont(family=theme.FONTE, size=12),
+            text_color=theme.COR_TEXTO_SEC
         )
-        self.combo_pag.set("Pix")
-        self.combo_pag.grid(row=4, column=0, padx=16, pady=(0, 10), sticky="w")
+        self.lbl_pontos_previstos.grid(row=4, column=0, padx=12, pady=(2, 10), sticky="w")
 
-        # ===== Finalizar =====
         self.btn_finalizar = ctk.CTkButton(
-            box,
+            footer,
             text="Finalizar venda",
             height=40,
             fg_color="#FFFFFF",
             hover_color=theme.COR_HOVER,
             text_color=theme.COR_TEXTO,
+            border_width=1,
+            border_color=theme.COR_HOVER,
             command=self._finalizar
         )
-        self.btn_finalizar.grid(row=5, column=0, padx=16, pady=(0, 16), sticky="ew")
+        self.btn_finalizar.grid(row=5, column=0, padx=12, pady=(0, 12), sticky="ew")
 
         self._render_carrinho()
 
-    # ---------------- Cliente (opcional) ----------------
+    # =========================================================
+    # CLIENTE
+    # =========================================================
     def _toggle_cliente(self):
         ligado = self.vincular_cliente_var.get()
         estado = "normal" if ligado else "disabled"
@@ -328,6 +451,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         else:
             self.cliente_selecionado = None
             self.lbl_cliente_sel.configure(text="Nenhum cliente vinculado")
+            self._atualizar_resumo_venda()
 
     def _selecionar_cliente(self):
         if not self._clientes_filtrados:
@@ -345,6 +469,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         self.cliente_selecionado = self._clientes_filtrados[idx]
         c = self.cliente_selecionado
         self.lbl_cliente_sel.configure(text=f'Vinculado: {c.get("nome", "")} ({c.get("telefone", "")})')
+        self._atualizar_resumo_venda()
 
     def _remover_cliente(self):
         self.cliente_selecionado = None
@@ -352,8 +477,11 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         self.combo_cliente.configure(values=["(nenhum)"])
         self.combo_cliente.set("(nenhum)")
         self.lbl_cliente_sel.configure(text="Nenhum cliente vinculado")
+        self._atualizar_resumo_venda()
 
-    # ---------------- Catálogo ----------------
+    # =========================================================
+    # CATÁLOGO
+    # =========================================================
     def _render_catalogo(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
@@ -363,7 +491,6 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         produtos = self._listar_produtos_catalogo(filtro, tipo)
 
-        # agrupa categoria -> subgrupo
         grupos = {}
         for p in produtos:
             categoria = p.get("categoria", "Outros")
@@ -377,7 +504,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
                 sub_node = self.tree.insert(tipo_node, "end", text=subgrupo_nome, open=True)
 
                 for p in itens:
-                    preco = theme.fmt_dinheiro(float(p["preco"])) if not isinstance(p["preco"], str) else p["preco"]
+                    preco = self._fmt_money(p["preco"])
                     estoque = self._estoque_disponivel(p)
                     tag = "sem_estoque" if estoque <= 0 else "ok"
 
@@ -389,17 +516,12 @@ class PaginaVendasBalcao(ctk.CTkFrame):
                         tags=(tag, str(p["id"]))
                     )
 
-        # destaque item sem estoque
-        self.tree.tag_configure("sem_estoque", foreground="#888888")
-
     def _adicionar_selecionado(self):
         sel = self.tree.selection()
         if not sel:
             return
 
         item_id = sel[0]
-
-        # pega o id do produto nas tags
         tags = self.tree.item(item_id, "tags")
         pid = None
         for t in tags:
@@ -408,7 +530,7 @@ class PaginaVendasBalcao(ctk.CTkFrame):
                 break
 
         if pid is None:
-            return  # clicou em grupo/subgrupo
+            return
 
         produto = self._obter_produto_catalogo(pid)
         if not produto:
@@ -417,10 +539,10 @@ class PaginaVendasBalcao(ctk.CTkFrame):
 
         estoque_disponivel = self._estoque_disponivel(produto)
         if estoque_disponivel <= 0:
+            self._msg("Estoque", "Sem estoque disponível para este produto.", icon="warning")
             self._render_catalogo()
             return
 
-        # adiciona/incrementa no carrinho (sem baixar estoque ainda)
         existente = next((c for c in self.carrinho if c["id"] == pid), None)
         if existente:
             existente["qtd"] += 1
@@ -438,39 +560,118 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         self._render_catalogo()
         self._render_carrinho()
 
-    # ---------------- Carrinho ----------------
+    # =========================================================
+    # CARRINHO
+    # =========================================================
+    def _alterar_qtd(self, produto_id, delta):
+        item = next((c for c in self.carrinho if c["id"] == produto_id), None)
+        if not item:
+            return
+
+        if delta > 0:
+            produto = self._obter_produto_catalogo(produto_id)
+            if produto:
+                disp = self._estoque_disponivel(produto)
+                if disp <= 0:
+                    self._msg("Estoque", "Quantidade acima do estoque disponível.", icon="warning")
+                    self._render_catalogo()
+                    return
+
+        item["qtd"] += int(delta)
+
+        if item["qtd"] <= 0:
+            self.carrinho = [c for c in self.carrinho if c["id"] != produto_id]
+
+        self._render_catalogo()
+        self._render_carrinho()
+
+    def _remover_item(self, produto_id):
+        self.carrinho = [c for c in self.carrinho if c["id"] != produto_id]
+        self._render_catalogo()
+        self._render_carrinho()
+
     def _render_carrinho(self):
         for w in self.lista_carrinho.winfo_children():
             w.destroy()
 
-        total = 0.0
         for item in self.carrinho:
-            total += item["preco"] * item["qtd"]
+            total_item = float(item["preco"]) * int(item["qtd"])
 
             linha = ctk.CTkFrame(self.lista_carrinho, fg_color="#FFFFFF", corner_radius=10)
             linha.pack(fill="x", pady=6)
 
-            ctk.CTkLabel(
-                linha, text=item["nome"],
-                font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
-                text_color=theme.COR_TEXTO
-            ).pack(anchor="w", padx=10, pady=(8, 0))
+            linha.grid_columnconfigure(0, weight=1)
+            linha.grid_columnconfigure(1, weight=0)
 
             ctk.CTkLabel(
                 linha,
-                text=f'{item["qtd"]} x {theme.fmt_dinheiro(item["preco"])}',
+                text=item["nome"],
+                font=ctk.CTkFont(family=theme.FONTE, size=12, weight="bold"),
+                text_color=theme.COR_TEXTO
+            ).grid(row=0, column=0, padx=10, pady=(8, 0), sticky="w")
+
+            ctk.CTkLabel(
+                linha,
+                text=f'Qtd: {item["qtd"]}  |  Unit.: {self._fmt_money(item["preco"])}  |  Item: {self._fmt_money(total_item)}',
                 font=ctk.CTkFont(family=theme.FONTE, size=12),
                 text_color=theme.COR_TEXTO_SEC
-            ).pack(anchor="w", padx=10, pady=(0, 8))
+            ).grid(row=1, column=0, padx=10, pady=(0, 8), sticky="w")
 
-        self.lbl_total.configure(text=f"Total: {theme.fmt_dinheiro(total)}")
+            btns = ctk.CTkFrame(linha, fg_color="transparent")
+            btns.grid(row=0, column=1, rowspan=2, padx=10, pady=8, sticky="e")
 
+            ctk.CTkButton(
+                btns,
+                text="−",
+                width=34,
+                height=28,
+                fg_color="#FFFFFF",
+                hover_color=theme.COR_HOVER,
+                text_color=theme.COR_TEXTO,
+                border_width=1,
+                border_color=theme.COR_HOVER,
+                command=lambda pid=item["id"]: self._alterar_qtd(pid, -1),
+            ).pack(side="left", padx=(0, 6))
+
+            ctk.CTkButton(
+                btns,
+                text="+",
+                width=34,
+                height=28,
+                fg_color="#FFFFFF",
+                hover_color=theme.COR_HOVER,
+                text_color=theme.COR_TEXTO,
+                border_width=1,
+                border_color=theme.COR_HOVER,
+                command=lambda pid=item["id"]: self._alterar_qtd(pid, +1),
+            ).pack(side="left", padx=(0, 6))
+
+            ctk.CTkButton(
+                btns,
+                text="Remover",
+                width=86,
+                height=28,
+                fg_color="#FFFFFF",
+                hover_color=theme.COR_HOVER,
+                text_color=theme.COR_TEXTO,
+                border_width=1,
+                border_color=theme.COR_HOVER,
+                command=lambda pid=item["id"]: self._remover_item(pid),
+            ).pack(side="left")
+
+        self._atualizar_resumo_venda()
+
+    # =========================================================
+    # FINALIZAR
+    # =========================================================
     def _finalizar(self):
         if not self.carrinho:
+            self._msg("Carrinho", "Adicione ao menos um produto.", icon="warning")
             return
 
         itens = [{"produto_id": item["id"], "qtd": item["qtd"]} for item in self.carrinho]
         cliente_id = self.cliente_selecionado["id"] if self.cliente_selecionado else None
+        pontos_previstos = self._calcular_pontos_previstos(self._calcular_subtotal())
 
         try:
             self.sistema.registrar_venda(
@@ -478,11 +679,12 @@ class PaginaVendasBalcao(ctk.CTkFrame):
                 cliente_id=cliente_id,
                 itens=itens,
                 forma_pagamento=self.combo_pag.get(),
+                data_venda=self._agora_para_banco(),
             )
         except Exception as e:
-            CTkMessagebox(
-                title="Erro ao finalizar",
-                message=f"Não foi possível concluir a venda.\n\nDetalhes: {e}",
+            self._msg(
+                "Erro ao finalizar",
+                f"Não foi possível concluir a venda.\n\nDetalhes: {e}",
                 icon="cancel"
             )
             self._render_catalogo()
@@ -493,8 +695,8 @@ class PaginaVendasBalcao(ctk.CTkFrame):
         self._render_catalogo()
         self._render_carrinho()
 
-        CTkMessagebox(
-            title="Sucesso",
-            message="Venda registrada com sucesso!",
-            icon="check"
-        )
+        msg = "Venda registrada com sucesso!"
+        if pontos_previstos > 0:
+            msg += f"\n\nRN05 prevista: {pontos_previstos} ponto(s)"
+
+        self._msg("Sucesso", msg, icon="check")

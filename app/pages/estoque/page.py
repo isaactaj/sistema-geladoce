@@ -1,4 +1,3 @@
-# app/pages/estoque/page.py
 import customtkinter as ctk
 from tkinter import ttk
 from CTkMessagebox import CTkMessagebox
@@ -46,7 +45,12 @@ class PaginaEstoque(ctk.CTkFrame):
         }
         pad_botoes = (0, 10)
 
-        self.btn_salvar = ctk.CTkButton(self.frame_acoes, text="Adicionar Item", command=self.acao_salvar, **btn_config)
+        self.btn_salvar = ctk.CTkButton(
+            self.frame_acoes,
+            text="Adicionar Insumo",
+            command=self.acao_salvar,
+            **btn_config
+        )
         self.btn_salvar.pack(side="left", padx=pad_botoes)
 
         self.btn_editar = ctk.CTkButton(self.frame_acoes, text="Editar Item", command=self.acao_editar, **btn_config)
@@ -99,9 +103,7 @@ class PaginaEstoque(ctk.CTkFrame):
         self.tabela.configure(yscrollcommand=scrollbar.set)
         scrollbar.grid(row=0, column=1, sticky="ns")
 
-        # Garante insumos padrão (agora como INSUMO + INATIVO)
         self._garantir_insumos_padrao()
-
         self.atualizar_tabela()
 
     # =========================================================
@@ -115,6 +117,20 @@ class PaginaEstoque(ctk.CTkFrame):
                 return self.sistema.listar_estoque(termo)
             except TypeError:
                 return self.sistema.listar_estoque()
+
+    def _obter_item_estoque(self, produto_id):
+        try:
+            item = self.sistema.obter_item_estoque(produto_id)
+            if item:
+                return item
+        except Exception:
+            pass
+
+        # fallback defensivo
+        try:
+            return self.sistema.obter_produto(produto_id)
+        except Exception:
+            return None
 
     def _obter_produto(self, produto_id):
         try:
@@ -144,22 +160,20 @@ class PaginaEstoque(ctk.CTkFrame):
         return None
 
     def _buscar_item_por_id(self, produto_id):
+        item = self._obter_item_estoque(produto_id)
+        if item:
+            return item
+
         for item in self._listar_estoque(""):
             item_id = item.get("produto_id", item.get("id"))
             if int(item_id) == int(produto_id):
                 return item
         return None
 
-    def _criar_insumo_inativo(self, nome: str):
-        """
-        Cria um produto como INSUMO e INATIVO, para não aparecer no catálogo de vendas.
-        """
-        return self.sistema.salvar_produto(
+    def _criar_insumo_inativo(self, nome: str, quantidade: int = 0):
+        return self.sistema.salvar_insumo(
             nome=nome,
-            categoria="Outros",
-            preco="0,00",
-            tipo_item="Insumo",
-            eh_insumo=True,
+            quantidade_inicial=quantidade,
             ativo=False,
         )
 
@@ -185,13 +199,7 @@ class PaginaEstoque(ctk.CTkFrame):
             if self._normalizar_nome(nome) in existentes:
                 continue
             try:
-                novo = self._criar_insumo_inativo(nome)
-                pid = novo.get("id") if isinstance(novo, dict) else None
-                if pid is None:
-                    item = self._buscar_item_por_nome(nome)
-                    pid = item.get("produto_id", item.get("id")) if item else None
-                if pid is not None:
-                    self.sistema.definir_estoque(produto_id=int(pid), quantidade=int(qtd))
+                self._criar_insumo_inativo(nome, qtd)
             except Exception:
                 pass
 
@@ -228,27 +236,28 @@ class PaginaEstoque(ctk.CTkFrame):
 
     def acao_salvar(self):
         janela = ctk.CTkToplevel(self)
-        janela.title("Novo Item de Estoque")
-        janela.geometry("420x440")
+        janela.title("Novo Insumo")
+        janela.geometry("420x300")
         janela.attributes("-topmost", True)
 
-        ctk.CTkLabel(janela, text="Nome do Item:").pack(pady=(20, 5), padx=20, anchor="w")
+        ctk.CTkLabel(janela, text="Nome do Insumo:").pack(pady=(20, 5), padx=20, anchor="w")
         entry_nome = ctk.CTkEntry(janela)
         entry_nome.pack(fill="x", padx=20)
 
-        ctk.CTkLabel(janela, text="Quantidade:").pack(pady=(10, 5), padx=20, anchor="w")
+        ctk.CTkLabel(janela, text="Quantidade Inicial:").pack(pady=(10, 5), padx=20, anchor="w")
         entry_qtd = ctk.CTkEntry(janela)
         entry_qtd.pack(fill="x", padx=20)
 
-        ctk.CTkLabel(janela, text="Tipo:").pack(pady=(10, 5), padx=20, anchor="w")
-        combo_tipo = ctk.CTkOptionMenu(janela, values=["Insumo", "Produto"])
-        combo_tipo.pack(fill="x", padx=20)
-        combo_tipo.set("Insumo")
+        ctk.CTkLabel(
+            janela,
+            text="Esse cadastro cria apenas INSUMOS internos.\nEles não aparecerão na tela de produtos nem na venda.",
+            text_color=theme.COR_TEXTO_SEC,
+            justify="left"
+        ).pack(pady=(12, 0), padx=20, anchor="w")
 
         def confirmar():
             nome = entry_nome.get().strip()
             qtd_str = entry_qtd.get().strip()
-            tipo = combo_tipo.get()
 
             if not nome or not qtd_str:
                 CTkMessagebox(title="Erro", message="Preencha os campos.", icon="cancel")
@@ -271,26 +280,8 @@ class PaginaEstoque(ctk.CTkFrame):
                     self.sistema.definir_estoque(produto_id=pid, quantidade=qtd_atual + qtd)
                     msg = "Quantidade adicionada ao item existente!"
                 else:
-                    if tipo == "Insumo":
-                        novo = self._criar_insumo_inativo(nome)
-                    else:
-                        # Produto interno pode ser ativo=False também, mas deixo ativo=True por padrão
-                        novo = self.sistema.salvar_produto(
-                            nome=nome,
-                            categoria="Outros",
-                            preco="0,00",
-                            tipo_item="Produto",
-                            eh_insumo=False,
-                            ativo=True,
-                        )
-                    pid = novo.get("id") if isinstance(novo, dict) else None
-                    if pid is None:
-                        item = self._buscar_item_por_nome(nome)
-                        pid = int(item.get("produto_id", item.get("id"))) if item else None
-                    if pid is None:
-                        raise ValueError("Não foi possível identificar o produto criado.")
-                    self.sistema.definir_estoque(produto_id=int(pid), quantidade=int(qtd))
-                    msg = "Item adicionado!"
+                    self._criar_insumo_inativo(nome, qtd)
+                    msg = "Insumo adicionado!"
 
                 self.entry_busca.delete(0, "end")
                 self.atualizar_tabela()
@@ -309,9 +300,14 @@ class PaginaEstoque(ctk.CTkFrame):
             return
 
         pid = int(sel[0])
-        item_atual = self._buscar_item_por_id(pid)
+        item_atual = self._obter_item_estoque(pid)
+
         if not item_atual:
-            CTkMessagebox(title="Erro", message="Item não encontrado no estoque.", icon="cancel")
+            CTkMessagebox(
+                title="Erro",
+                message="Item não encontrado no estoque.\n\nAtualize a tela e tente novamente.",
+                icon="cancel"
+            )
             return
 
         produto = self._obter_produto(pid)
@@ -331,7 +327,6 @@ class PaginaEstoque(ctk.CTkFrame):
         entry_qtd.insert(0, str(item_atual.get("qtd", 0)))
         entry_qtd.pack(fill="x", padx=20)
 
-        # tipo exibido (não muda em edição aqui)
         tipo_item = (produto or {}).get("tipo_item", item_atual.get("tipo_item", "Produto"))
         eh_insumo = bool((produto or {}).get("eh_insumo", item_atual.get("eh_insumo", False)))
         tipo_txt = "Insumo" if (tipo_item == "Insumo" or eh_insumo) else "Produto"
@@ -356,15 +351,23 @@ class PaginaEstoque(ctk.CTkFrame):
 
             try:
                 if produto:
-                    # mantém categoria/preco/tipo/ativo do próprio produto
                     self.sistema.salvar_produto(
                         nome=nome,
                         categoria=produto.get("categoria", "Outros"),
                         preco=str(produto.get("preco", "0,00")),
                         produto_id=pid,
-                        tipo_item=produto.get("tipo_item"),
+                        tipo_item=produto.get("tipo_item", "Produto"),
                         eh_insumo=bool(produto.get("eh_insumo", False)),
+                        fornecedor_id=produto.get("fornecedor_id"),
                         ativo=bool(produto.get("ativo", 1)),
+                    )
+                else:
+                    # fallback raro: se não conseguir ler como produto, salva como insumo
+                    self.sistema.salvar_insumo(
+                        nome=nome,
+                        quantidade_inicial=qtd,
+                        produto_id=pid,
+                        ativo=False,
                     )
 
                 self.sistema.definir_estoque(produto_id=pid, quantidade=qtd)
@@ -401,16 +404,14 @@ class PaginaEstoque(ctk.CTkFrame):
             eh_insumo = bool((produto or {}).get("eh_insumo", False))
             ativo = int((produto or {}).get("ativo", 1))
 
-            # Insumo/inativo -> inativa e zera
             if (tipo_item == "Insumo" or eh_insumo or ativo == 0):
                 try:
-                    self.sistema.excluir_produto(pid)  # inativa
+                    self.sistema.excluir_produto(pid)
                 except Exception:
                     pass
                 self.sistema.definir_estoque(produto_id=pid, quantidade=0)
                 msg = "Item inativado/zerado com sucesso!"
             else:
-                # Produto de venda -> não apaga cadastro; apenas zera estoque
                 self.sistema.definir_estoque(produto_id=pid, quantidade=0)
                 msg = "Estoque zerado com sucesso!"
 
