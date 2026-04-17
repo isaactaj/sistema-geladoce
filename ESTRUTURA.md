@@ -12,6 +12,7 @@ Este arquivo explica **como o repositório está dividido**, para qualquer pesso
 ## 1) Estrutura de pastas
 
 geladocesistema/
+├─ docs/
 ├─ main.py
 ├─ README.md
 ├─ ESTRUTURA.md
